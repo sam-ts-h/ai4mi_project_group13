@@ -19,9 +19,12 @@ Goal: normalize an image array to the range [0, 255]  and return it as a dtype=u
 Which is compatible with standard image formats (PNG)
 """
 def norm_arr(img: np.ndarray) -> np.ndarray:
-    # TODO: your code here
 
-    raise NotImplementedError("Implement norm_arr")
+    min_value = img.min()
+    max_value = img.max()
+    normalized = (img - min_value) / (max_value - min_value) * 255
+
+    return normalized.astype(np.uint8)
 
 
 def sanity_ct(ct, x, y, z, dx, dy, dz) -> bool:
@@ -94,9 +97,24 @@ Requirements:
 """
 
 def get_splits(src_path: Path, retains: int) -> tuple[list[str], list[str]]:
-    # TODO: your code here
+    train_path = src_path / "train"
 
-    raise NotImplementedError("Implement get_splits")
+    patient_ids = []
+
+    for patient_path in train_path.iterdir():
+        if patient_path.is_dir():
+            patient_ids.append(patient_path.name)
+
+    patient_ids = sorted(patient_ids)
+
+    random.shuffle(patient_ids)
+
+    validation_ids = patient_ids[:retains]
+    training_ids = patient_ids[retains:]
+
+    return (training_ids, validation_ids)
+
+
 
 def main(args: argparse.Namespace):
     src_path: Path = Path(args.source_dir)
