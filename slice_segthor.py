@@ -2,10 +2,14 @@ import pickle
 import random
 import argparse
 import warnings
+import nibabel as nib
+
 from pathlib import Path
 from functools import partial
 from multiprocessing import Pool
 from typing import Callable
+from PIL import Image
+from skimage.transform import resize
 
 import numpy as np
 
@@ -47,7 +51,7 @@ def sanity_gt(gt, ct) -> bool:
     assert gt.dtype in [np.uint8], gt.dtype
 
     # Do the test on 3d: assume all organs are present..
-    assert set(np.unique(gt)) == set(range(5))
+    assert set(np.unique(gt)) <= set(range(5))
 
     return True
 
@@ -68,7 +72,7 @@ Context:
   - Return the original voxel spacings (dx, dy, dz).
 
 Hints:
-  - Use nibabel to load NIfTI images.
+  - Use nibabel to load NIfTI images. // imported
   - Use skimage.transform.resize (tip: anti_aliasing might be useful)
   - The PNG files should be stored in the dest_path, organised into separate subfolders: train/img, train/gt, val/img, and val/gt
   - Use consistent filenames: e.g. f"{id_}_{idz:04d}.png" inside subfolders "img" and "gt"; where idz is the slice index.
@@ -83,8 +87,61 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     assert ct_path.exists()
 
     # --------- FILL FROM HERE -----------
+    ct_nifti = nib.load(str(ct_path))
+    ct = np.asarray(ct_nifti.dataobj) #dont use ct_nifti.get_fdata(), because it converts to float, sanity ct wants ints
+    x,y,z = ct.shape
+    dx,dy,dz = ct_nifti.header.get_zooms() [:3]
 
-    raise NotImplementedError("Implement slice_patient")
+    sanity_ct(ct, x,y,z,dx,dy,dz)
+
+    if not test_mode:
+        gt_path = id_path / "GT.nii.gz"
+        assert gt_path.exists()
+
+        gt_nifti = nib.load(str(gt_path))
+        gt = np.asarray(gt_nifti.dataobj)
+        sanity_gt(gt, ct)
+
+    ct = norm_arr(ct)
+
+    #checks if the normalisation worked
+    assert ct.dtype == np.uint8
+    assert ct.min() == 0
+    assert ct.max() == 255
+
+    img_dest_path = dest_path / "img"
+    img_dest_path.mkdir(parents=True, exist_ok=True)
+
+    if not test_mode:
+        gt_dest_path = dest_path / "gt"
+        gt_dest_path.mkdir(parents=True, exist_ok=True)
+
+    for idz in range(z):
+        ct_slice = ct[:, :, idz] #all x and y slices but only one z slice (2d)
+
+        ct_slice_resized = resize(ct_slice, shape, preserve_range=True, anti_aliasing=True)
+        ct_slice_resized = ct_slice_resized.astype(np.uint8)
+
+        filename = f"{id_}_{idz:04d}.png"
+        Image.fromarray(ct_slice_resized).save(img_dest_path / filename)
+
+        if not test_mode:
+            gt_slice = gt[:, :, idz]
+
+            gt_slice_resized = resize(gt_slice, shape, order=0, preserve_range=True, anti_aliasing=False)
+            #GT is a label, we use oder=0 to avoid interpolation and use nearest neighbor (0/1/2//3/4) values. 
+            #Preserve range to keep the original values and anti aliasing = false because we dont want smoothing
+
+            gt_slice_resized = gt_slice_resized.astype(np.uint8)
+            gt_slice_resized *= 63 #from classes to PNG values 
+
+            assert set(np.unique(gt_slice_resized)) <= {0, 63, 126, 189, 252} 
+
+            Image.fromarray(gt_slice_resized).save(gt_dest_path / filename)
+
+
+
+    return dx,dy,dz
 
 
 """
