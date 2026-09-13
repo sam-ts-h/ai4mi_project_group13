@@ -24,6 +24,7 @@
 
 import argparse
 import warnings
+import random
 from typing import Any
 from pathlib import Path
 from pprint import pprint
@@ -78,7 +79,11 @@ def gt_transform(K, img):
         return img[0]
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
-    # Networks and scheduler
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+# Networks and scheduler
     gpu: bool = args.gpu and torch.cuda.is_available()
     device = torch.device("cuda") if gpu else torch.device("cpu")
     print(f">> Picked {device} to run experiments")
@@ -235,6 +240,7 @@ def runTraining(args):
 def main():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
