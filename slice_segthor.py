@@ -22,13 +22,36 @@ CT images have a wide range of intensity values (Hounsfield units)
 Goal: normalize an image array to the range [0, 255]  and return it as a dtype=uint8
 Which is compatible with standard image formats (PNG)
 """
-def norm_arr(img: np.ndarray) -> np.ndarray:
+def norm_arr(img: np.ndarray, clip_min: float | None = None, clip_max: float | None = None,) -> np.ndarray:
+    clipping_requested = clip_min is not None or clip_max is not None
 
-    min_value = img.min()
-    max_value = img.max()
+    if clipping_requested:
+        if clip_min is None or clip_max is None:
+            raise ValueError("Both clip_min and clip_max must be provided.")
+
+        if clip_min >= clip_max:
+            raise ValueError("clip_min must be smaller than clip_max.")
+
+        img = np.clip(img, clip_min, clip_max)
+        min_value = clip_min
+        max_value = clip_max
+    else:
+        min_value = img.min()
+        max_value = img.max()
+
+    if max_value == min_value:
+        raise ValueError("Cannot normalize an image with a constant intensity.")
+
     normalized = (img - min_value) / (max_value - min_value) * 255
 
     return normalized.astype(np.uint8)
+
+    ####removed this
+    #min_value = img.min()
+    #max_value = img.max()
+    #normalized = (img - min_value) / (max_value - min_value) * 255
+    #return normalized.astype(np.uint8)
+    #####
 
 
 def sanity_ct(ct, x, y, z, dx, dy, dz) -> bool:
@@ -78,8 +101,8 @@ Hints:
   - Use consistent filenames: e.g. f"{id_}_{idz:04d}.png" inside subfolders "img" and "gt"; where idz is the slice index.
 """
 
-def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], test_mode=False)\
-        -> tuple[float, float, float]:
+def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], test_mode=False, clip_min: float | None = None,
+    clip_max: float | None = None,) -> tuple[float, float, float]:
 
     id_path: Path = source_path / ("train" if not test_mode else "test") / id_
     ct_path: Path = (id_path / f"{id_}.nii.gz")
@@ -102,12 +125,12 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         gt = np.asarray(gt_nifti.dataobj)
         sanity_gt(gt, ct)
 
-    ct = norm_arr(ct)
+    ct = norm_arr(ct, clip_min = clip_min, clip_max = clip_max)
 
     #checks if the normalisation worked
     assert ct.dtype == np.uint8
-    assert ct.min() == 0
-    assert ct.max() == 255
+    assert 0 <= ct.min()
+    assert ct.max() <= 255
 
     img_dest_path = dest_path / "img"
     img_dest_path.mkdir(parents=True, exist_ok=True)
@@ -196,7 +219,9 @@ def main(args: argparse.Namespace):
         pfun: Callable = partial(slice_patient,
                                  dest_path=dest_mode,
                                  source_path=src_path,
-                                 shape=tuple(args.shape))
+                                 shape=tuple(args.shape),
+                                 clip_min=args.clip_min,
+                                clip_max=args.clip_max,)
 
         resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
@@ -220,8 +245,17 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--shape', type=int, nargs="+", default=[256, 256])
     parser.add_argument('--retains', type=int, default=10, help="Number of retained patient for the validation data")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument( "--clip_min",type=float,default=None, help="Optional lower HU clipping boundary",)
+    parser.add_argument("--clip_max",type=float,default=None,help="Optional upper HU clipping boundary",)
 
     args = parser.parse_args()
+    if (args.clip_min is None) != (args.clip_max is None):
+        parser.error("--clip_min and --clip_max must be provided together")
+
+    if (args.clip_min is not None and args.clip_min >= args.clip_max):
+        parser.error("--clip_min must be smaller than --clip_max")
+
+
     random.seed(args.seed)
     print(args)
 
