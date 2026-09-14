@@ -55,11 +55,11 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augmentation="none", equalize=False, debug=False):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
-        self.augmentation: bool = augment
+        self.augmentation: str = augmentation
         self.equalize: bool = equalize
 
         self.test_mode: bool = subset == 'test'
@@ -82,7 +82,7 @@ class SliceDataset(Dataset):
         if not self.test_mode:
             gt_open = Image.open(gt_path)
 
-            if self.augmentation:
+            if self.augmentation == "rotation":
                 angle = random.uniform(-10,10) #random angle between -10 and 10
 
                 img_open = TF.rotate(img_open, #image to rotate
@@ -93,6 +93,42 @@ class SliceDataset(Dataset):
                                     angle=angle, #random angle
                                     interpolation = InterpolationMode.NEAREST, #use nearest for the mask, because we dont want smooth values but the original class values [0, 63, 126, 189, 252].
                                     fill = 0)
+
+            elif self.augmentation == "translation":
+                # Move the image by at most 5% of its width and height
+                max_dx = int(0.05 * img_open.width)
+                max_dy = int(0.05 * img_open.height)
+
+                translate = [
+                    random.randint(-max_dx, max_dx),
+                    random.randint(-max_dy, max_dy)
+                ]
+
+                img_open = TF.affine(
+                    img_open,
+                    angle=0,
+                    translate=translate,
+                    scale=1.0,
+                    shear=[0.0, 0.0],
+                    interpolation=InterpolationMode.BILINEAR,
+                    fill=0
+                )
+
+                gt_open = TF.affine(
+                    gt_open,
+                    angle=0,
+                    translate=translate,
+                    scale=1.0,
+                    shear=[0.0, 0.0],
+                    interpolation=InterpolationMode.NEAREST,
+                    fill=0
+                )
+
+            elif self.augmentation != "none":
+                raise ValueError(
+                    f"Unknown augmentation: {self.augmentation}"
+                )
+
         img: Tensor = self.img_transform(img_open)
 
         data_dict = {"images": img,
