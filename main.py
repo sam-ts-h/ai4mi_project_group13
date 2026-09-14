@@ -803,7 +803,7 @@ def main():
 
     parser.add_argument(
         '--seed',
-        default=42,
+        default=0,
         type=int,
         help=(
             "Random seed used to make "
