@@ -1,0 +1,48 @@
+Op basis van het bestand: "data_analyse_segthor" hebben we de volgende info
+-20 patienten waarbij alle GT bestanden de volgende klassen hebben:
+    0	Background
+    1	Esophagus
+    2	Heart
+    3	Trachea
+
+--> Let dus op dat klasse 4 (aorta) niet voorkomt in dit deel vd data_analyse_segthor
+
+Twee patiëntmappen bevatten een extra bestand:
+- Patient_01_1.nii.gz is een exacte kopie van Patient_01.nii.gz.
+- Patient_07/GT2.nii.gz is niet hetzelfde als GT.nii.gz.
+        GT2.nii.gz: bevat ook class 4; heeft dezelfde shape; heeft een andere voxel spacing en affine; verschilt in ongeveer 0,19% van de labels.
+
+##################Class verdeling ##################
+
+Class	    Aantal voxels	Aandeel van orgaanvoxels
+Esophagus	2.357.913	    circa 23,1%
+Heart	    7.496.021	    circa 73,3%. --> duidelijke class imbalance, veruit grootste (op background na, die is nu weggelaten)
+Trachea	    365.773	        circa 3,6%
+
+################## HU-waarden verdeling per class ##################
+| Class     | Gemiddelde | Mediaan | Standaardafwijking |        P1–P99 |
+| --------- | ---------: | ------: | -----------------: | ------------: |
+| Esophagus |      52,24 |      43 |              98,96 |  −209 tot 230 |
+| Heart     |      39,94 |      40 |              74,07 |  −132 tot 217 |
+| Trachea   |    −811,08 |    −925 |             247,24 | −1000 tot −38 |
+
+De absolute max en min zijn zo groot bijv het hart had een max HU van 7095 terwijl 99% onder 217 zit. 
+Deze extreme waarde zijn dus zo in de minderheid, dat dit bijv komt door artefacten, lucht, gebruik van evt contastmiddel etc. 
+
+################## Verschillen tussen patienten ##################
+| Class     | Laagste patiëntgemiddelde | Hoogste patiëntgemiddelde | Verschil | SD tussen patiënten |
+| --------- | ------------------------: | ------------------------: | -------: | ------------------: |
+| Esophagus |                    −21,47 |                    168,99 |   190,47 |               52,72 |
+| Heart     |                     −0,47 |                    110,37 |   110,85 |               35,92 |
+| Trachea   |                   −895,44 |                   −652,31 |   243,13 |               71,93 |
+
+Er zijn een aantal patienten die bij alle structuren (classes) hogere waardes hebben tov de andere patienten, dit kan bijv duiden 
+dat er verschillende procedures zijn gebruikt bij scannen (bijv contrastmiddel)
+
+
+
+De extreme minima en maxima laten zien dat we voor preprocessing bijv moeten clippen naar 2e 2n 99e percentiel om betere normalisatie te krijgen. 
+
+
+
+

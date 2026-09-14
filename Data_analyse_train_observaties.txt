@@ -1,0 +1,165 @@
+Patient Patient_01 has 3 files
+Patient Patient_02 has 2 files
+Patient Patient_03 has 2 files
+Patient Patient_04 has 2 files
+Patient Patient_07 has 3 files
+Patient Patient_08 has 2 files
+Patient Patient_09 has 2 files
+Patient Patient_11 has 2 files
+Patient Patient_12 has 2 files
+Patient Patient_13 has 2 files
+Patient Patient_14 has 2 files
+Patient Patient_16 has 2 files
+Patient Patient_17 has 2 files
+Patient Patient_18 has 2 files
+Patient Patient_19 has 2 files
+Total patients: 15
+Patient_01 heeft classes: [0 1 2 3]
+Patient_02 heeft classes: [0 1 2 3]
+Patient_03 heeft classes: [0 1 2 3]
+Patient_04 heeft classes: [0 1 2 3]
+Patient_07 heeft classes: [0 1 2 3]
+Patient_08 heeft classes: [0 1 2 3]
+Patient_09 heeft classes: [0 1 2 3]
+Patient_11 heeft classes: [0 1 2 3]
+Patient_12 heeft classes: [0 1 2 3]
+Patient_13 heeft classes: [0 1 2 3]
+Patient_14 heeft classes: [0 1 2 3]
+Patient_16 heeft classes: [0 1 2 3]
+Patient_17 heeft classes: [0 1 2 3]
+Patient_18 heeft classes: [0 1 2 3]
+Patient_19 heeft classes: [0 1 2 3]
+
+Alle classes in de dataset: [np.uint8(0), np.uint8(1), np.uint8(2), np.uint8(3)]
+
+HU-waarden per class over alle patiënten:
+
+Class: 1 - esophagus
+Aantal voxels: 1609048
+Minimum HU: -1000.0
+Maximum HU: 2264.0
+1e percentiel: -110.0
+5e percentiel: -13.0
+95e percentiel: 187.0
+99e percentiel: 226.0
+Gemiddelde HU: 54.99714676007179
+Mediaan HU: 44.0
+Standaardafwijking: 77.6862028926634
+
+Class: 2 - heart
+Aantal voxels: 5359533
+Minimum HU: -1000.0
+Maximum HU: 7095.0
+1e percentiel: -135.0
+5e percentiel: -85.0
+95e percentiel: 166.0
+99e percentiel: 225.0
+Gemiddelde HU: 39.91509801320376
+Mediaan HU: 40.0
+Standaardafwijking: 77.80147525879597
+
+Class: 3 - trachea
+Aantal voxels: 259027
+Minimum HU: -1000.0
+Maximum HU: 359.0
+1e percentiel: -1000.0
+5e percentiel: -1000.0
+95e percentiel: -315.0
+99e percentiel: -117.0
+Gemiddelde HU: -823.7655765615168
+Mediaan HU: -922.0
+Standaardafwijking: 220.6589750852671
+
+Gemiddelde HU per patiënt en per class:
+
+Class: 1 - esophagus
+Patient_01 : 21.19 HU
+Patient_02 : 141.37 HU
+Patient_03 : 159.25 HU
+Patient_04 : 42.83 HU
+Patient_07 : 25.75 HU
+Patient_08 : 45.55 HU
+Patient_09 : 113.21 HU
+Patient_11 : 26.35 HU
+Patient_12 : 29.66 HU
+Patient_13 : 38.52 HU
+Patient_14 : 29.98 HU
+Patient_16 : 144.2 HU
+Patient_17 : 28.81 HU
+Patient_18 : 43.56 HU
+Patient_19 : 40.07 HU
+Laagste gemiddelde: 21.19 HU
+Hoogste gemiddelde: 159.25 HU
+Verschil: 138.07 HU
+Standaardafwijking tussen patiënten: 48.01 HU
+
+Class: 2 - heart
+Patient_01 : 11.48 HU
+Patient_02 : 110.37 HU
+Patient_03 : 97.45 HU
+Patient_04 : 23.66 HU
+Patient_07 : 12.17 HU
+Patient_08 : 29.98 HU
+Patient_09 : 94.44 HU
+Patient_11 : -0.47 HU
+Patient_12 : 23.77 HU
+Patient_13 : 12.28 HU
+Patient_14 : 13.93 HU
+Patient_16 : 96.86 HU
+Patient_17 : 28.29 HU
+Patient_18 : 27.26 HU
+Patient_19 : 29.64 HU
+Laagste gemiddelde: -0.47 HU
+Hoogste gemiddelde: 110.37 HU
+Verschil: 110.85 HU
+Standaardafwijking tussen patiënten: 36.65 HU
+
+Class: 3 - trachea
+Patient_01 : -882.4 HU
+Patient_02 : -798.04 HU
+Patient_03 : -776.42 HU
+Patient_04 : -865.35 HU
+Patient_07 : -820.08 HU
+Patient_08 : -895.44 HU
+Patient_09 : -877.27 HU
+Patient_11 : -753.75 HU
+Patient_12 : -893.53 HU
+Patient_13 : -827.54 HU
+Patient_14 : -652.31 HU
+Patient_16 : -688.27 HU
+Patient_17 : -792.86 HU
+Patient_18 : -819.65 HU
+Patient_19 : -816.28 HU
+Laagste gemiddelde: -895.44 HU
+Hoogste gemiddelde: -652.31 HU
+Verschil: 243.13 HU
+Standaardafwijking tussen patiënten: 69.31 HU
+
+Patiënten met meer dan twee bestanden:
+Patient_01
+ - GT.nii.gz
+ - Patient_01.nii.gz
+ - Patient_01_1.nii.gz
+Patient_07
+ - GT.nii.gz
+ - GT2.nii.gz
+ - Patient_07.nii.gz
+
+Extra CT van Patient_01 controleren:
+Shape eerste CT: (512, 512, 229)
+Shape tweede CT: (512, 512, 229)
+Dezelfde shape: True
+Dezelfde spacing: True
+Dezelfde affine: True
+Exact dezelfde CT-waarden: True
+
+Extra GT van Patient_07 controleren:
+Shape eerste GT: (512, 512, 179)
+Shape tweede GT: (512, 512, 179)
+Dezelfde shape: True
+Dezelfde spacing: False
+Dezelfde affine: False
+Classes eerste GT: [0 1 2 3]
+Classes tweede GT: [0 1 2 3 4]
+Exact dezelfde labels: False
+Percentage verschillende voxels: 0.1914935405027933 %
