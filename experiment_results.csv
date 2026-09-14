@@ -1,3 +1,4 @@
 experiment,dataset,clip_min,clip_max,seed,epochs,best_epoch,val_loss,dice_class1,dice_class2,dice_class3,dice_class4,dice_present_classes,dice_official,runtime,conclusion
 E00_baseline,SEGTHOR_assignment1,none,none,42,20,16,0.017286,0.667740,0.889026,0.821945,1.000000,0.792904,0.844678,01:59:19,baseline
 E01_fixed_hu_window,SEGTHOR_fixed_hu_window,-1000,230,42,20,17,0.015439,0.685531,0.858641,0.815322,1.000000,0.786498,0.839874,01:53:15,lower overall Dice
+E02_wide_hu_window,SEGTHOR_wide_hu_window,-1000,1000,42,20,13,0.011067,0.711676,0.919669,0.820368,1.000000,0.817238,0.862928,01:57:45,improved overall Dice; retain
