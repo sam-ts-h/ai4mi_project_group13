@@ -22,12 +22,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import random
+
 from pathlib import Path
 from typing import Callable, Union
 
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import functional as TF
+from torchvision.transforms import InterpolationMode
 
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
@@ -72,13 +76,30 @@ class SliceDataset(Dataset):
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        img_open = Image.open(img_path)
+
+        #if we are not in test mode, open the ground truth/mask
+        if not self.test_mode:
+            gt_open = Image.open(gt_path)
+
+            if self.augmentation:
+                angle = random.uniform(-10,10) #random angle between -10 and 10
+
+                img_open = TF.rotate(img_open, #image to rotate
+                                     angle=angle, #random angle
+                                     interpolation = InterpolationMode.BILINEAR, #with rotate, the pixels are not always at the right spot, this interpolation method will make smooth pixel values (based on surrounding pixels)
+                                     fill = 0) #after rotation --> some corners will be empty --> fill them black (value of 0)
+                gt_open = TF.rotate(gt_open, #image to rotate
+                                    angle=angle, #random angle
+                                    interpolation = InterpolationMode.NEAREST, #use nearest for the mask, because we dont want smooth values but the original class values [0, 63, 126, 189, 252].
+                                    fill = 0)
+        img: Tensor = self.img_transform(img_open)
 
         data_dict = {"images": img,
                      "stems": img_path.stem}
 
         if not self.test_mode:
-            gt: Tensor = self.gt_transform(Image.open(gt_path))
+            gt: Tensor = self.gt_transform(gt_open)
 
             _, W, H = img.shape
             K, _, _ = gt.shape
