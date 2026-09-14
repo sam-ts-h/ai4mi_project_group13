@@ -123,7 +123,28 @@ class SliceDataset(Dataset):
                     interpolation=InterpolationMode.NEAREST,
                     fill=0
                 )
+            elif self.augmentation == "scaling":
+                #scale the image by a random factor between 0.9 and 1.1
+                scale_factor = random.uniform(0.9,1.1)
 
+                img_open = TF.affine(
+                                    img_open,
+                                    angle=0,
+                                    translate= [0,0],
+                                    scale=scale_factor,
+                                    shear=[0.0, 0.0],
+                                    interpolation=InterpolationMode.BILINEAR,
+                                    fill=0
+                                )
+                gt_open = TF.affine(
+                                    gt_open,
+                                    angle=0,
+                                    translate= [0,0],
+                                    scale=scale_factor,
+                                    shear=[0.0, 0.0],
+                                    interpolation=InterpolationMode.NEAREST,
+                                    fill=0
+                                )
             elif self.augmentation != "none":
                 raise ValueError(
                     f"Unknown augmentation: {self.augmentation}"

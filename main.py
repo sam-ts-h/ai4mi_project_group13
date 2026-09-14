@@ -253,7 +253,7 @@ def main():
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
     parser.add_argument( '--augmentation', default='none',
-    choices=['none', 'rotation', 'translation'],
+    choices=['none', 'rotation', 'translation', 'scaling'],
     help="Data augmentation applied to the training images."
 )
 
