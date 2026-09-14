@@ -39,16 +39,23 @@ from skimage.transform import resize
 from utils import map_, tqdm_
 
 
-def norm_arr(img: np.ndarray) -> np.ndarray:
-    casted = img.astype(np.float32)
-    shifted = casted - casted.min()
-    norm = shifted / shifted.max()
-    res = 255 * norm
+def norm_arr(
+    img: np.ndarray,
+    lower: float,
+    upper: float
+) -> np.ndarray:
 
-    assert 0 == res.min(), res.min()
-    assert res.max() == 255, res.max()
+    img = img.astype(np.float32)
 
-    return res.astype(np.uint8)
+    assert lower < upper
+
+    img = np.clip(img, lower, upper)
+
+    img = (img - lower) / (upper - lower)
+
+    img = img * 255
+
+    return img.astype(np.uint8)
 
 
 def sanity_ct(ct, x, y, z, dx, dy, dz) -> bool:
@@ -76,9 +83,25 @@ def sanity_gt(gt, ct) -> bool:
 
     return True
 
+def resize_ct(img: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    return resize(
+        img,
+        shape,
+        mode="constant",
+        preserve_range=True,
+        anti_aliasing=True
+    )
 
-resize_: Callable = partial(resize, mode="constant", preserve_range=True, anti_aliasing=False)
 
+def resize_gt(img: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    return resize(
+        img,
+        shape,
+        order=0,
+        mode="constant",
+        preserve_range=True,
+        anti_aliasing=False
+    )
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int],
                   test_mode: bool = False) -> tuple[float, float, float]:
@@ -103,14 +126,14 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
-    norm_ct: np.ndarray = norm_arr(ct)
+    norm_ct: np.ndarray = norm_arr(ct, -1000, 1000)
 
     to_slice_ct = norm_ct
     to_slice_gt = gt
 
     for idz in range(z):
-        img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.uint8)
-        gt_slice = resize_(to_slice_gt[:, :, idz], shape, order=0).astype(np.uint8)
+        img_slice = resize_ct(to_slice_ct[:, :, idz], shape).astype(np.uint8)
+        gt_slice = resize_gt(to_slice_gt[:, :, idz], shape).astype(np.uint8)
         assert img_slice.shape == gt_slice.shape
         gt_slice *= 63
         assert gt_slice.dtype == np.uint8, gt_slice.dtype
