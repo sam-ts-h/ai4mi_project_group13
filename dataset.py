@@ -145,6 +145,37 @@ class SliceDataset(Dataset):
                                     interpolation=InterpolationMode.NEAREST,
                                     fill=0
                                 )
+            elif self.augmentation == "combination":
+                #all augmentations
+                angle = random.uniform(-10,10)
+                max_dx = int(0.05 * img_open.width)
+                max_dy = int(0.05 * img_open.height)
+
+                translate = [
+                    random.randint(-max_dx, max_dx),
+                    random.randint(-max_dy, max_dy)
+                ]
+                scale_factor = random.uniform(0.9,1.1)
+
+                img_open = TF.affine(
+                                    img_open,
+                                    angle=angle,
+                                    translate= translate,
+                                    scale=scale_factor,
+                                    shear=[0.0, 0.0],
+                                    interpolation=InterpolationMode.BILINEAR,
+                                    fill=0
+                                )
+                gt_open = TF.affine(
+                                    gt_open,
+                                    angle=angle,
+                                    translate= translate,
+                                    scale=scale_factor,
+                                    shear=[0.0, 0.0],
+                                    interpolation=InterpolationMode.NEAREST,
+                                    fill=0
+                                )
+
             elif self.augmentation != "none":
                 raise ValueError(
                     f"Unknown augmentation: {self.augmentation}"
