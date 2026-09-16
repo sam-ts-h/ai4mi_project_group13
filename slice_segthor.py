@@ -25,6 +25,7 @@
 import pickle
 import random
 import argparse
+import json
 import warnings
 from pathlib import Path
 from functools import partial
@@ -37,16 +38,15 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from utils import map_, tqdm_
+from explore_segthor import find_pairs
 
-
-def norm_arr(img: np.ndarray) -> np.ndarray:
+def norm_arr(img: np.ndarray, lo: float, hi: float) -> np.ndarray:
     casted = img.astype(np.float32)
-    shifted = casted - casted.min()
-    norm = shifted / shifted.max()
-    res = 255 * norm
+    clipped = np.clip(casted, lo, hi)
+    res = (255 * (clipped - lo) / (hi-lo))                            
 
-    assert 0 == res.min(), res.min()
-    assert res.max() == 255, res.max()
+    assert 0 <= res.min(), res.min()
+    assert res.max() <= 255, res.max()
 
     return res.astype(np.uint8)
 
@@ -81,7 +81,7 @@ resize_: Callable = partial(resize, mode="constant", preserve_range=True, anti_a
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int],
-                  test_mode: bool = False) -> tuple[float, float, float]:
+                  test_mode: bool = False, hi=300, lo=-1000, mean=-350, std=0.5) -> tuple[float, float, float]:
     id_path: Path = source_path / ("train" if not test_mode else "test") / id_
 
     ct_path: Path = (id_path / f"{id_}.nii.gz") if not test_mode else (source_path / "test" / f"{id_}.nii.gz")
@@ -103,8 +103,10 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
-    norm_ct: np.ndarray = norm_arr(ct)
+    # ! changed this to global normalization
+    norm_ct: np.ndarray = norm_arr(ct, lo, hi)
 
+    
     to_slice_ct = norm_ct
     to_slice_gt = gt
 
@@ -171,6 +173,32 @@ def main(args: argparse.Namespace):
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
+    # ! calculate lo, hi, mean and std from all training img instances for global clipping and z-scoring 
+    chunks = []
+    for pid in training_ids:
+        id_path = src_path / "train" / pid
+        ct = np.asarray(nib.load(id_path / f"{pid}.nii.gz").dataobj)
+        gt = np.asarray(nib.load(id_path / "GT.nii.gz").dataobj)
+        fg = ct[gt > 0].astype(np.float32)
+        if fg.size > 10_000:
+            fg = np.random.choice(fg, 10_000, replace=False)
+        chunks.append(fg)
+
+    pooled = np.concatenate(chunks)              # ~300k values, trivial
+    lo, hi = np.percentile(pooled, [0.5, 99.5])
+    clipped = np.clip(pooled, lo, hi)          # just for clean mean and std values
+    mean, std = clipped.mean(), clipped.std()
+
+    # save mean and std if we decide to later use z-scoring while data loading for training
+    dest_path.mkdir(parents=True, exist_ok=True)
+    with open(dest_path / "norm_stats.json", "w") as f:
+        json.dump({"lo": float(lo), "hi": float(hi),
+                   "mean_hu": float(mean),
+                   "std_hu": float(std),
+                   "mean_01": float((mean - lo) / (hi - lo)),
+                   "std_01": float(std / (hi - lo))}, f, indent=2)
+    print(f">> Normalisation window: [{lo:.1f}, {hi:.1f}] HU")
+
     split_ids: list[str]
     for mode, split_ids in zip(["train", "val"], [training_ids, validation_ids]):
         dest_mode: Path = dest_path / mode
@@ -180,7 +208,8 @@ def main(args: argparse.Namespace):
                                  dest_path=dest_mode,
                                  source_path=src_path,
                                  shape=tuple(args.shape),
-                                 test_mode=mode == 'test')
+                                 test_mode=mode == 'test',
+                                 lo=lo, hi=hi, mean=mean, std=std)
         resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
         match args.process:
