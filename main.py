@@ -56,8 +56,10 @@ datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
 # Avoids the classes with C (often used for the number of Channel)
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
-datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
-datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# 'scored' is how many classes actually have data. Part 1 has no class 4 (esophagus),
+# so scoring it would hand out a free dice of 1.0 on every single slice.
+datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
 def img_transform(img):
         img = img.convert('L')
@@ -134,6 +136,9 @@ def runTraining(args):
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
+    # falls back to K for datasets where every class has data
+    scoredClasses: int = datasets_params[args.dataset].get('scored', K)
+
     if args.mode == "full":
         loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
@@ -208,11 +213,11 @@ def runTraining(args):
 
                     j += B  # Keep in mind that _in theory_, each batch might have a different size
                     # For the DSC average: do not take the background class (0) into account:
-                    postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:].mean():05.3f}",
+                    postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:scoredClasses].mean():05.3f}",
                                                     "Loss": f"{log_loss[e, :i + 1].mean():5.2e}"}
                     if K > 2:
                         postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
-                                         for k in range(1, K)}
+                                         for k in range(1, scoredClasses)}
                     tq_iter.set_postfix(postfix_dict)
 
         # I save it at each epochs, in case the code crashes or I decide to stop it early
@@ -221,7 +226,7 @@ def runTraining(args):
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
 
-        current_dice: float = log_dice_val[e, :, 1:].mean().item()
+        current_dice: float = log_dice_val[e, :, 1:scoredClasses].mean().item()
         if current_dice > best_dice:
             message = f">>> Improved dice at epoch {e}: {best_dice:05.3f}->{current_dice:05.3f} DSC"
             print(message)

@@ -39,14 +39,16 @@ from skimage.transform import resize
 from utils import map_, tqdm_
 
 
-def norm_arr(img: np.ndarray) -> np.ndarray:
-    casted = img.astype(np.float32)
-    shifted = casted - casted.min()
-    norm = shifted / shifted.max()
-    res = 255 * norm
+WINDOW_LOW: int = -1000
+WINDOW_HIGH: int = 500
 
-    assert 0 == res.min(), res.min()
-    assert res.max() == 255, res.max()
+
+def norm_arr(img: np.ndarray) -> np.ndarray:
+    clipped = np.clip(img.astype(np.float32), WINDOW_LOW, WINDOW_HIGH)
+    res = (clipped - WINDOW_LOW) / (WINDOW_HIGH - WINDOW_LOW) * 255
+
+    assert res.min() >= 0, res.min()
+    assert res.max() <= 255, res.max()
 
     return res.astype(np.uint8)
 
@@ -109,7 +111,8 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     to_slice_gt = gt
 
     for idz in range(z):
-        img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.uint8)
+        # blur before shrinking, else detail too fine for the new grid comes back as fake structure
+        img_slice = resize_(to_slice_ct[:, :, idz], shape, anti_aliasing=True).astype(np.uint8)
         gt_slice = resize_(to_slice_gt[:, :, idz], shape, order=0).astype(np.uint8)
         assert img_slice.shape == gt_slice.shape
         gt_slice *= 63
