@@ -52,6 +52,16 @@ from utils import (Dcm,
 
 from losses import (CrossEntropy)
 
+AUG_CONFIGS: dict[str, dict | None] = {
+    "none": None,
+    "gamma": {"gamma": 0.3},
+    "brightness": {"brightness": 0.1},
+    "contrast": {"contrast": 0.2},
+    "blur": {"blur": 0.4},
+    "noise": {"noise": 0.02},
+    "all": {"gamma": 0.3, "brightness": 0.1, "contrast": 0.2, "blur": 0.4, "noise": 0.02},
+}
+
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
 # Avoids the classes with C (often used for the number of Channel)
@@ -99,11 +109,11 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     root_dir = Path("data") / args.dataset
 
 
-
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
+                             augment = AUG_CONFIGS[args.augment],
                              debug=args.debug)
     train_loader = DataLoader(train_set,
                               batch_size=B,
@@ -114,6 +124,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            root_dir,
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
+                           augment = None,
                            debug=args.debug)
     val_loader = DataLoader(val_set,
                             batch_size=B,
@@ -129,6 +140,7 @@ def runTraining(args):
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
+    # TODO: implement DSC part of the loss
     if args.mode == "full":
         loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
@@ -178,6 +190,7 @@ def runTraining(args):
                     assert 0 <= img.min() and img.max() <= 1
                     B, _, W, H = img.shape
 
+                    # ! actual prediction and loss calculation
                     pred_logits = net(img)
                     pred_probs = F.softmax(1 * pred_logits, dim=1)  # 1 is the temperature parameter
 
@@ -246,6 +259,7 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument('--augment', default='none', choices=AUG_CONFIGS.keys())
 
     args = parser.parse_args()
 

@@ -103,7 +103,7 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
-    # ! changed this to global normalization
+    # ! changed this to global clipping
     norm_ct: np.ndarray = norm_arr(ct, lo, hi)
 
     
