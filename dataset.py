@@ -24,7 +24,8 @@
 
 from pathlib import Path
 from typing import Callable, Union
-
+import torch
+import numpy as np
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
@@ -51,12 +52,13 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augment=False, equalize=False, debug=False,loadDistMaps=False):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: bool = augment
         self.equalize: bool = equalize
+        self.loadDistMaps: bool = loadDistMaps
 
         self.test_mode: bool = subset == 'test'
 
@@ -85,5 +87,11 @@ class SliceDataset(Dataset):
             assert gt.shape == (K, W, H)
 
             data_dict["gts"] = gt
+
+            if self.loadDistMaps:
+                distMapPath = gt_path.parent.parent / 'distmap' / f"{gt_path.stem}.npy"
+                distMap = np.load(distMapPath).astype(np.float32)
+                assert distMap.shape == gt.shape, 'shape of distmap and gt are not the same.... dataset.py says no'
+                data_dict["distMaps"] = torch.from_numpy(distMap)
 
         return data_dict

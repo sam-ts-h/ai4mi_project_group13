@@ -31,12 +31,18 @@ data/SEGTHOR:
 		--shape 256 256 --retain 5
 	mv $@_tmp $@
 
-outputFile = experiments/baseline
+dataDistmap: data/SEGTHOR
+	$(info $(green)python computeDistanceMaps.py$(reset))
+	python computeDistanceMaps.py --data_dir data/SEGTHOR
+
+outputFile = experiments/exp_cedice
+# ce of ceDice of ceDiceBoundary 
+lossFn = ceDice
 
 trainData: data/SEGTHOR
-	python main.py --dataset SEGTHOR --mode full --epochs 25 --dest $(outputFile) --gpu
+	python main.py --dataset SEGTHOR --mode full --loss $(lossFn) --epochs 25 --dest $(outputFile) --gpu
 
-# Stitch the best epoch back to nifti, score it in 3D, plot the training curves
+
 evalData:
 	python stitch.py --data_folder $(outputFile)/best_epoch/val --dest_folder $(outputFile)/volumes \
 		--num_classes 255 --grp_regex "(Patient_\\d\\d)_\\d\\d\\d\\d" \

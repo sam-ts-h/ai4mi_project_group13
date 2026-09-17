@@ -50,7 +50,7 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy)
+from losses import (CrossEntropy,DiceLoss,BoundaryLoss,CombinedLoss)
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -108,12 +108,15 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     root_dir = Path("data") / args.dataset
 
 
+    # Can skip loading if not distance based metric
+    loadDistMaps: bool = args.loss == 'ceDiceBoundary'
 
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
-                             debug=args.debug)
+                             debug=args.debug,
+                             loadDistMaps=loadDistMaps)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
@@ -123,7 +126,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            root_dir,
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
-                           debug=args.debug)
+                           debug=args.debug,
+                           loadDistMaps=loadDistMaps)
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,
@@ -142,21 +146,41 @@ def runTraining(args):
     scoredClasses: int = datasets_params[args.dataset].get('scored', K)
 
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
+        ceIdk = list(range(K))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
-        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
+        ceIdk = [0, 1, 3, 4]  # Do not supervise the heart (class 2)
     else:
         raise ValueError(args.mode, args.dataset)
 
+    # background not handy for dice and dist metric so we dont look at it...
+    foregroundIdk = list(range(1, K))
+
+    ce = CrossEntropy(idk=ceIdk)
+    dice = DiceLoss(idk=foregroundIdk) if args.loss in ['ceDice', 'ceDiceBoundary'] else None
+    boundary = BoundaryLoss(idk=foregroundIdk) if args.loss == 'ceDiceBoundary' else None
+    loss_fn = CombinedLoss(ce, dice, boundary)
     # Notice one has the length of the _loader_, and the other one of the _dataset_
     log_loss_tra: Tensor = torch.zeros((args.epochs, len(train_loader)))
     log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
 
+    # Each term of the loss logged on its own, so the curves can be read apart afterwards
+    logPartsTra = {}
+    logPartsVal = {}
+    for name in loss_fn.partNames():
+        logPartsTra[name] = torch.zeros((args.epochs, len(train_loader)))
+        logPartsVal[name] = torch.zeros((args.epochs, len(val_loader)))
+
     best_dice: float = 0
 
     for e in range(args.epochs):
+        # 
+        if boundary is not None:
+            #paper: start at 0.01 and add 0.01 each epoch, capped so the region terms never hit 0
+            loss_fn.alpha = min(0.01 + 0.01 * e, 0.99)
+            print(f"Epoch {e}: BOUNDARY alpha = {loss_fn.alpha:.2f}")
+
         for m in ['train', 'val']:
             match m:
                 case 'train':
@@ -167,6 +191,7 @@ def runTraining(args):
                     loader = train_loader
                     log_loss = log_loss_tra
                     log_dice = log_dice_tra
+                    logParts = logPartsTra
                 case 'val':
                     net.eval()
                     opt = None
@@ -175,6 +200,8 @@ def runTraining(args):
                     loader = val_loader
                     log_loss = log_loss_val
                     log_dice = log_dice_val
+                    #important so the functions can update...
+                    logParts = logPartsVal
 
             with cm():  # Either dummy context manager, or the torch.no_grad for validation
                 j = 0
@@ -182,6 +209,7 @@ def runTraining(args):
                 for i, data in tq_iter:
                     img = data['images'].to(device)
                     gt = data['gts'].to(device)
+                    distMaps = data['distMaps'].to(device) if 'distMaps' in data else None
 
                     if opt:  # So only for training
                         opt.zero_grad()
@@ -197,8 +225,10 @@ def runTraining(args):
                     pred_seg = probs2one_hot(pred_probs)
                     log_dice[e, j:j + B, :] = dice_coef(pred_seg, gt)  # One DSC value per sample and per class
 
-                    loss = loss_fn(pred_probs, gt)
+                    loss, parts = loss_fn(pred_probs, gt, distMaps)
                     log_loss[e, i] = loss.item()  # One loss value per batch (averaged in the loss)
+                    for name, value in parts.items():
+                        logParts[name][e, i] = value.item()
 
                     if opt:  # Only for training
                         loss.backward()
@@ -218,8 +248,11 @@ def runTraining(args):
                     postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:scoredClasses].mean():05.3f}",
                                                     "Loss": f"{log_loss[e, :i + 1].mean():5.2e}"}
                     if K > 2:
-                        postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
-                                         for k in range(1, scoredClasses)}
+                        for k in range(1, scoredClasses):
+                            postfix_dict[f"Dice-{k}"] = f"{log_dice[e, :j, k].mean():05.3f}"
+                    if len(logParts) > 1:
+                        for name, values in logParts.items():
+                            postfix_dict[name] = f"{values[e, :i + 1].mean():5.2e}"
                     tq_iter.set_postfix(postfix_dict)
 
         # I save it at each epochs, in case the code crashes or I decide to stop it early
@@ -227,6 +260,10 @@ def runTraining(args):
         np.save(args.dest / "dice_tra.npy", log_dice_tra)
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
+
+        for name in loss_fn.partNames():
+            np.save(args.dest / f"loss_{name}_tra.npy", logPartsTra[name])
+            np.save(args.dest / f"loss_{name}_val.npy", logPartsVal[name])
 
         current_dice: float = log_dice_val[e, :, 1:scoredClasses].mean().item()
         if current_dice > best_dice:
@@ -251,6 +288,7 @@ def main():
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
