@@ -31,7 +31,7 @@ data/SEGTHOR:
 		--shape 256 256 --retain 5
 	mv $@_tmp $@
 
-outputFile = experiments/run1
+outputFile = experiments/baseline
 
 trainData: data/SEGTHOR
 	python main.py --dataset SEGTHOR --mode full --epochs 25 --dest $(outputFile) --gpu

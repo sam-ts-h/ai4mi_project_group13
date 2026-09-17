@@ -1,4 +1,5 @@
 import argparse
+import csv
 from pathlib import Path
 import numpy as np
 import nibabel as nib
@@ -93,35 +94,41 @@ def main(args):
         for name in metricNames:
             scores[name][patientId] = patient[name]
 
-        print(f"{patientId}: dsc {np.nanmean(patient['dsc'][1:]):.2f}, "
-              f"hd95 {np.nanmean(patient['hd95'][1:]):.2f} mm")
+    with open(args.dest_folder / "perPatient.csv", "w", newline="") as csvFile:
+        writer = csv.writer(csvFile)
+        writer.writerow(["patient", "class", "metric", "value"])
+        for name in metricNames:
+            for patientId, values in scores[name].items():
+                for k in range(nrClasses):
+                    writer.writerow([patientId, classNames[k], name, values[k]])
 
+    summary = {}
     for name in metricNames:
-        np.savez(args.dest_folder / f"{name}.npz", **scores[name])
+        #rows is patients
+        stacked = np.stack(list(scores[name].values()))
+        columns = [stacked[:, k] for k in range(nrClasses)] + [stacked[:, 1:]]
+        summary[name] = [np.nan if np.all(np.isnan(v)) else np.nanmean(v) for v in columns]
+
+    with open(args.dest_folder / "summary.csv", "w", newline="") as csvFile:
+        writer = csv.writer(csvFile)
+        writer.writerow(["metric"] + classNames + ["combined"])
+        for name in metricNames:
+            writer.writerow([name] + summary[name])
 
     header = 'metric'.ljust(14)
     for name in classNames + ['combined']:
         header += name.rjust(12)
 
     print()
-    print('mean over patients, combined all foreground')
+    print('mean over patients')
     print(header)
     print('-' * len(header))
 
     for name in metricNames:
-        #rows is patients
-        stacked = np.stack(list(scores[name].values()))
-        columns = [stacked[:, k] for k in range(nrClasses)] + [stacked[:, 1:]]
-
         line = name.ljust(14)
-        for values in columns:
-            if np.all(np.isnan(values)):
-                line += '-'.rjust(12)
-            else:
-                line += f'{np.nanmean(values):.3f}'.rjust(12)
+        for value in summary[name]:
+            line += ('-' if np.isnan(value) else f'{value:.2f}').rjust(12)
         print(line)
-
-    print(f'saved to {args.dest_folder}')
 
 
 def get_args():
