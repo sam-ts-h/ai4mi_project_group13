@@ -37,18 +37,18 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from utils import map_, tqdm_
+from preprocessing_common import CLIP_MIN, CLIP_MAX
 
 
-def norm_arr(img: np.ndarray) -> np.ndarray:
-    casted = img.astype(np.float32)
-    shifted = casted - casted.min()
-    norm = shifted / shifted.max()
-    res = 255 * norm
-
-    assert 0 == res.min(), res.min()
-    assert res.max() == 255, res.max()
-
-    return res.astype(np.uint8)
+def clip_ct(img: np.ndarray) -> np.ndarray:
+    """
+    Clip raw HU values to the dataset's foreground percentile range (see eda_segthor.py's analyze_intensity). so no rescale to
+    0-255 anymore. This replaces the old norm_arr() lossy per-slice min-max normalization: the network now receives real, 
+    clipped HU values directly, consistent across every slice and every patient: the same real tissue density always maps to the same value, 
+    (assuming no measurement differences between e.g. different scans) regardless of what else happens to be in that particular slice, 
+    which per-slice min-max could not guarantee.
+    """
+    return np.clip(img.astype(np.float32), -1000.0, 239.0)
 
 
 def sanity_ct(ct, x, y, z, dx, dy, dz) -> bool:
@@ -103,13 +103,23 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
-    norm_ct: np.ndarray = norm_arr(ct)
+    # Was: norm_ct = norm_arr(ct) lossy per-slice 0-255 min-max normalization, discarding real HU information before 
+    # it ever reached the network. Now: clip to a fixed, dataset-wide HU range and keep as float.
+    clipped_ct: np.ndarray = clip_ct(ct)
 
-    to_slice_ct = norm_ct
+    to_slice_ct = clipped_ct
     to_slice_gt = gt
 
+    img_save_path: Path = Path(dest_path, "img")
+    gt_save_path: Path = Path(dest_path, "gt")
+    img_save_path.mkdir(parents=True, exist_ok=True)
+    gt_save_path.mkdir(parents=True, exist_ok=True)
+
     for idz in range(z):
-        img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.uint8)
+        # Image: resize the clipped HU slice, keep as float32 (no uint8 cast as that was the lossy step we're removing).
+        img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.float32)
+        # GT: unchanged still nearest-neighbor resize, still uint8 class
+        # labels still scaled by 63 for PNG-visibility. 
         gt_slice = resize_(to_slice_gt[:, :, idz], shape, order=0).astype(np.uint8)
         assert img_slice.shape == gt_slice.shape
         gt_slice *= 63
@@ -117,20 +127,16 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         # assert set(np.unique(gt_slice)) <= set(range(5))
         assert set(np.unique(gt_slice)) <= set([0, 63, 126, 189, 252]), np.unique(gt_slice)
 
-        arrays: list[np.ndarray] = [img_slice, gt_slice]
+        filename_stem = f"{id_}_{idz:04d}"
 
-        subfolders: list[str] = ["img", "gt"]
-        assert len(arrays) == len(subfolders)
-        for save_subfolder, data in zip(subfolders,
-                                        arrays):
-            filename = f"{id_}_{idz:04d}.png"
+        # Image saved losslessly as .npy
+        np.save(str(img_save_path / f"{filename_stem}.npy"), img_slice)
 
-            save_path: Path = Path(dest_path, save_subfolder)
-            save_path.mkdir(parents=True, exist_ok=True)
-
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning)
-                imsave(str(save_path / filename), data)
+        # GT stays a normal PNG with discrete class labels, so no precision to lose,
+        # and this keeps it directly viewable/compatible with viewer.py as before.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            imsave(str(gt_save_path / f"{filename_stem}.png"), gt_slice)
 
     return dx, dy, dz
 

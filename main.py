@@ -60,9 +60,17 @@ datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
 def img_transform(img):
-        img = img.convert('L')
-        img = np.array(img)[np.newaxis, ...]
-        img = img / 255  # max <= 1
+        ''' img is a np array loaded in dataset.py: either raw, clipped HU float32 values 
+         (the new pipeline; see slice_segthor.py's clip_ct()) or uint8 0-255 values 
+         (for TOY2, still produced by gen_two_circles.py as PNG).
+         Branch on dtype rather than hardcoding per-dataset:
+           - float input (SEGTHOR): already a real, meaningful physical value (clipped HU) pass through as-is, no rescale.
+           - uint8 input (TOY2): rescale to [0, 1] as before.'''
+        img = img[np.newaxis, ...]
+        if img.dtype == np.uint8:
+            img = img.astype(np.float32) / 255
+        else:
+            img = img.astype(np.float32)
         img = torch.tensor(img, dtype=torch.float32)
         return img
 
@@ -173,8 +181,11 @@ def runTraining(args):
                     if opt:  # So only for training
                         opt.zero_grad()
 
-                    # Sanity tests to see we loaded and encoded the data correctly
-                    assert 0 <= img.min() and img.max() <= 1
+                    # Sanity check: no NaN/inf snuck through preprocessing.
+                    # Note that the old assert 0 <= img.min() and img.max() <= 1
+                    # assumed every dataset was rescaled to [0, 1], which is  no longer true now that SEGTHOR feeds raw, 
+                    # HU values here.
+                    assert torch.isfinite(img).all()
                     B, _, W, H = img.shape
 
                     pred_logits = net(img)
