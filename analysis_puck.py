@@ -2,159 +2,175 @@ import nibabel as nib
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from collections import Counter
 
-data_dir = Path("data/segthor_part1/data/segthor_part1/train")
+data_dir = Path("data/segthor_part1/train")
 
-#Inspectation of what the CT and GT data looks like
-img_ct = nib.load("data/segthor_part1/data/segthor_part1/train/Patient_01/Patient_01.nii.gz")
-img_gt = nib.load("data/segthor_part1/data/segthor_part1/train/Patient_01/GT.nii.gz")
-ct = img_ct.get_fdata()
-gt = img_gt.get_fdata()
-print(ct.shape, img_ct.header.get_zooms())
-print(gt.shape, img_gt.header.get_zooms())
+#1 Count the amount of patients in the dataset
+patients = 0
+for patient in data_dir.iterdir():
+    patients += 1
 
-ct = np.asarray(img_ct.dataobj)
-gt = np.asarray(img_gt.dataobj)
+print(f"There are {patients} patiënts in this dataset")
 
-print(ct.dtype, ct.shape)
-print("min:", ct.min(), "max:", ct.max(), "mean:", ct.mean())
+#2 What is the shape of these images:
+shape = []
+voxels_CT = []
+voxels_GT = []
+for patient in data_dir.iterdir():
+    img_ct = nib.load(patient / f"{patient.name}.nii.gz")
+    img_gt = nib.load(patient / "GT.nii.gz")
+    ct = img_ct.get_fdata()
+    gt = img_gt.get_fdata()
+    print(ct.shape, img_ct.header.get_zooms())
+    print(gt.shape, img_gt.header.get_zooms())
+    shape.append(ct.shape)
+    shape.append(gt.shape)
+    voxels_CT.append(img_ct.header.get_zooms()[:3])
+    voxels_GT.append(img_gt.header.get_zooms()[:3])
 
-plt.hist(ct.ravel(), bins=200)
-plt.xlabel("Hounsfield Units (HU)")
-plt.ylabel("Voxel count")
-plt.show()
+counts_CT = Counter(voxels_CT)
+counts_GT = Counter(voxels_GT)
+print("\nVoxel sizes and number of patients:")
 
-print(gt.dtype, gt.shape)
-print("min:", gt.min(), "max:", gt.max(), "mean:", gt.mean())
+for voxel, count in counts_CT.most_common():
+    print(f"{voxel}: {count}")
+print("\nVoxel sizes GT and number of patients:")
+for voxel_GT, count in counts_GT.most_common():
+    print(f"{voxel_GT}: {count}")
 
-CLASS_NAMES = {0: "background", 1: "esophagus", 2: "heart", 3: "trachea", 4: "aorta"}
+#creating a plot of the voxel size count
+unique_voxels = sorted(set(counts_CT) | set(counts_GT))
 
-labels, counts = np.unique(gt.ravel(), return_counts=True)
-plt.bar(labels, counts)
-plt.xticks(labels, [CLASS_NAMES[l] for l in labels])
-plt.ylabel("Voxel count")
-plt.title("Patient 1")
-plt.show()
+ct_values = []
+gt_values = []
+for v in unique_voxels:
+    ct_values.append(counts_CT.get(v,0))
+    gt_values.append(counts_GT.get(v,0))
 
-#All patiënts hu values overview:
-data = Path("data/segthor_part1/data/segthor_part1/train")
+x = np.arange(len(unique_voxels))
+width = 0.4
 
-all_values = []
-for patient in data.iterdir():
-    ct_path = patient / f"{patient.name}.nii.gz"
-    ct = np.asarray(nib.load(str(ct_path)).dataobj)
-    all_values.append(ct.ravel())
+plt.figure(figsize=(8, 6))
 
-all_values = np.concatenate(all_values)
-print("min:", all_values.min(), "max:", all_values.max(), "mean:", all_values.mean())
+plt.bar(x - width/2, ct_values, width, label="CT")
+plt.bar(x + width/2, gt_values, width, label="GT")
 
-plt.hist(all_values, bins=200)
-plt.xlabel("Hounsfield Units (HU)")
-plt.ylabel("Voxel count")
-plt.show()
+plt.xlabel("Voxel size (x, y, z) mm")
+plt.ylabel("Patient count")
+plt.title("Different voxel sizes: CT vs GT")
 
-#All patiënts class balance overview:
-all_gt_values = []
-for patient in data.iterdir():
-    gt_path = patient / f"GT.nii.gz"
-    gt = np.asarray(nib.load(str(gt_path)).dataobj)
-    all_gt_values.append(gt.ravel())
-
-all_gt_values = np.concatenate(all_gt_values)
-print("mean:", all_gt_values.mean())
-
-labels, counts = np.unique(all_gt_values, return_counts=True)
-plt.bar(labels, counts)
-plt.xticks(labels, [CLASS_NAMES[l] for l in labels])
-plt.ylabel("Voxel count")
-plt.title("Class balance (all patients)")
-plt.show()
-
-#Insight in parts:
-class_0 = ((all_gt_values == 0).sum() / len(all_gt_values)) * 100
-class_1 = ((all_gt_values == 1).sum() / len(all_gt_values)) * 100
-class_2 = ((all_gt_values == 2).sum() / len(all_gt_values)) * 100
-class_3 = ((all_gt_values == 3).sum() / len(all_gt_values)) * 100
-
-print(f'class 0: {class_0:.2f}%')
-print(f'class 1: {class_1:.2f}%')
-print(f'class 2: {class_2:.2f}%')
-print(f'class 3: {class_3:.2f}%')
-
-#HU distribution per class:
-CLASS_NAMES = {0: "class0", 1: "class1", 2: "class2", 3: "class3"}
-values_per_class = {label: [] for label in CLASS_NAMES}
-
-for patient in sorted(data.iterdir()):
-    ct = np.asarray(nib.load(str(patient / f"{patient.name}.nii.gz")).dataobj)
-    gt = np.asarray(nib.load(str(patient / "GT.nii.gz")).dataobj)
-
-    for label in CLASS_NAMES:
-        mask = gt == label
-        values_per_class[label].append(ct[mask])
-
-for label, name in CLASS_NAMES.items():
-    if values_per_class[label]:
-        values = np.concatenate(values_per_class[label])
-
-    else:
-        np.array([])
-    print(f"{name:12s}: n={values.size:>10,d}  mean={values.mean():>8.1f}  std={values.std():>7.1f}")
-
-# boxplot: 1 box per klasse, laat meteen outliers en spreiding zien
-present = [label for label in CLASS_NAMES if
-           values_per_class[label] and np.concatenate(values_per_class[label]).size > 0]
-plt.boxplot([np.concatenate(values_per_class[l]) for l in present],
-            tick_labels=[CLASS_NAMES[l] for l in present])
-plt.ylabel("Hounsfield Units (HU)")
-plt.title("HU-distributie per class")
-plt.show()
-
-patient_names = []
-dx_values, dy_values, dz_values = [], [], []
-
-for patient in sorted(data_dir.iterdir()):
-    ct_path = patient / f"{patient.name}.nii.gz"
-    nib_obj = nib.load(str(ct_path))
-    dx, dy, dz = nib_obj.header.get_zooms()
-
-    patient_names.append(patient.name)
-    dx_values.append(dx)
-    dy_values.append(dy)
-    dz_values.append(dz)
-
-dx_values = np.array(dx_values)
-dy_values = np.array(dy_values)
-dz_values = np.array(dz_values)
-
-# --- Plot 1: spacing per patiënt, om de spreiding direct te zien ---
-plt.figure(figsize=(10, 5))
-x = np.arange(len(patient_names))
-plt.plot(x, dx_values, "o-", label="dx (x-richting)")
-plt.plot(x, dy_values, "s-", label="dy (y-richting)")
-plt.plot(x, dz_values, "^-", label="dz (z-richting, tussen slices)")
-plt.xticks(x, patient_names, rotation=90)
-plt.ylabel("Spacing (mm)")
-plt.title("Voxel-spacing per patiënt")
+plt.xticks(
+    x,
+    [f"({v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f})"
+    for v in unique_voxels],
+    rotation=45,
+    ha="right"
+)
 plt.legend()
 plt.tight_layout()
-plt.savefig("spacing_per_patient.png", dpi=150)
-plt.show()
+plt.savefig("voxel_sizes.png", dpi=300)
+plt.close()
 
-# --- Plot 2: boxplot, voor een compact overzicht van de spreiding ---
-plt.figure(figsize=(6, 5))
-plt.boxplot([dx_values, dy_values, dz_values], tick_labels=["dx", "dy", "dz"])
-plt.ylabel("Spacing (mm)")
-plt.title("Spreiding van voxel-spacing over alle patiënten")
+#3 HU distribution whole dataset:
+hu_values = []
+max_hu = 0
+max_patient = 0
+max_voxel = 0
+for patient in data_dir.iterdir():
+    img_ct = nib.load(patient / f"{patient.name}.nii.gz")
+    ct = img_ct.get_fdata()
+    hu_values.append(ct.ravel())
+    patient_max = ct.max()
+
+    if patient_max > max_hu:
+        max_hu = patient_max
+        max_patient = patient.name
+        max_voxel = np.unravel_index(np.argmax(ct), ct.shape)
+
+all_hu = np.concatenate(hu_values)
+print("Minimum HU:", all_hu.min())
+print("Maximum HU:", all_hu.max())
+print("Mean HU:", all_hu.mean())
+print("Median HU:", np.median(all_hu))
+print("Patient with the maximum HU value:", max_patient)
+
+p1 = np.percentile(all_hu, 1)
+p99 = np.percentile(all_hu, 99)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    #plot1: alle values
+axes[0].boxplot(all_hu, showfliers=True)
+axes[0].set_ylim(all_hu.min()-100, all_hu.max())
+axes[0].set_title("HU distribution full range")
+axes[0].set_ylabel("HU")
+axes[0].set_xticks([1])
+axes[0].set_xticklabels(["All voxels"])
+
+    #plot2 clipped to p99
+axes[1].boxplot(all_hu, showfliers=True)
+axes[1].set_ylim(all_hu.min()-100, p99)
+axes[1].set_title(f"HU distribution zoomed\n(1st–99th percentile)")
+axes[1].set_ylabel("HU")
+axes[1].set_xticks([1])
+axes[1].set_xticklabels(["All voxels"])
+
 plt.tight_layout()
-plt.savefig("spacing_boxplot.png", dpi=150)
+plt.savefig("HU_boxplot.png", dpi=300)
 plt.show()
 
-# --- Samenvatting + voorstel voor target_spacing ---
-print("=== Spacing-statistieken over alle patiënten ===")
-for name, values in [("dx", dx_values), ("dy", dy_values), ("dz", dz_values)]:
-    print(f"  {name}: min={values.min():.3f}  max={values.max():.3f}  "
-          f"median={np.median(values):.3f}  mean={values.mean():.3f}")
+#4 HU values per class
+hu_by_class = {
+    0: [],
+    1: [],
+    2: [],
+    3: []
+}
+for patient in data_dir.iterdir():
 
-print("\n=== Voorgestelde target_spacing (op basis van de mediaan) ===")
-print(f"  --target_spacing {np.median(dx_values):.2f} {np.median(dy_values):.2f} {np.median(dz_values):.2f}")
+    img_ct = nib.load(patient / f"{patient.name}.nii.gz")
+    img_gt = nib.load(patient / "GT.nii.gz")
+
+    ct = img_ct.get_fdata()
+    gt = img_gt.get_fdata()
+
+    for class_id in range(4):
+        class_hu = ct[gt == class_id]
+        hu_by_class[class_id].append(class_hu)
+
+for class_id in range(4):
+    hu_by_class[class_id] = np.concatenate(hu_by_class[class_id])
+
+for class_id in range(4):
+    print(
+        f"Class {class_id}: "
+        f"{len(hu_by_class[class_id]):,} voxels"
+    )
+
+#plot figure
+plt.figure(figsize=(10, 6))
+
+colors = ["blue", "green", "orange", "red"]
+classes = ["background", "esophagus", "heart", "trachea"]
+
+for class_id in range(4):
+
+    plt.hist(
+        hu_by_class[class_id],
+        bins=200,
+        range=(-1000, 500),
+        density=True,
+        alpha=0.4,
+        color=colors[class_id],
+        label=classes[class_id]
+    )
+
+plt.xlabel("HU values")
+plt.ylabel("Density")
+plt.title("HU distribution per organ")
+plt.legend()
+
+plt.tight_layout()
+plt.savefig("HU_classes.png", dpi=300)
+plt.show()
