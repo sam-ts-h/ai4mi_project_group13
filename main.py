@@ -80,6 +80,8 @@ def gt_transform(K, img):
         return img[0]
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
+    torch.manual_seed(0)
+    np.random.seed(0)
     # Networks and scheduler
     # CUDA first, so the same code picks the right device on the cluster;
     # MPS is the Apple Silicon GPU backend, for local development on a Mac.
