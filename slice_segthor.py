@@ -37,7 +37,9 @@ import nibabel as nib
 from skimage.io import imsave
 
 from utils import map_, tqdm_
-from preprocessing_common import CLIP_MIN, CLIP_MAX, resample_image_slice, resample_mask_slice
+from preprocessing_common import (CLIP_MIN, CLIP_MAX, GRID_ROWS, GRID_COLS,
+                                  resample_image_slice, resample_mask_slice,
+                                  body_mask_2d, body_centroid, crop_or_pad_to_grid)
 
 
 def clip_ct(img: np.ndarray) -> np.ndarray:
@@ -136,7 +138,7 @@ def compute_global_stats(training_ids: list[str], source_path: Path) -> tuple[fl
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int],
-                  mean: float, std: float, test_mode: bool = False) -> tuple[float, float, float]:
+                  mean: float, std: float, pad_fill_value: float, test_mode: bool = False) -> tuple[float, float, float]:
     clipped_ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = clipped_ct.shape[2]
 
@@ -155,6 +157,15 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         gt_slice = resample_mask_slice(to_slice_gt[:, :, idz], (dx, dy))
         assert img_slice.shape == gt_slice.shape
 
+        # Body detection happens here, on the resampled but not yet normalized HU slice, since  body_mask_2d's thresholds are 
+        # in real HU units, which are meaningless once z-scored. 
+        mask = body_mask_2d(img_slice)
+        center = body_centroid(mask)
+        if center is None:
+            # No tissue above threshold at all in this slice (e.g. a mostly empty slice right at the very top/bottom of the scan),
+            # fall back to the slice's own geometric center.
+            center = (img_slice.shape[0] / 2, img_slice.shape[1] / 2)
+
         # Normalize after resampling, using taining mean/std
         # The same fixed mean/std is applied identically whether this call is processing a train or val patient,
         # so val data is normalized exactly the way it will be at real inference time (fixed stats, no peeking at val/test data).
@@ -164,6 +175,17 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         assert gt_slice.dtype == np.uint8, gt_slice.dtype
         # assert set(np.unique(gt_slice)) <= set(range(5))
         assert set(np.unique(gt_slice)) <= set([0, 63, 126, 189, 252]), np.unique(gt_slice)
+
+
+        # Crop/pad both the image and GT to the same fixed grid, centered on the same body centroid. 
+        # Image padding uses pad_fill_value (the normalized-space equivalent of real air HU, precomputed once in main()).
+        # GT padding uses 0 (background class) since padded regions have no real anatomy.
+        img_slice = crop_or_pad_to_grid(img_slice, GRID_ROWS, GRID_COLS, center,
+                                        fill_value=pad_fill_value)
+        gt_slice = crop_or_pad_to_grid(gt_slice, GRID_ROWS, GRID_COLS, center,
+                                       fill_value=0)
+        assert img_slice.shape == (GRID_ROWS, GRID_COLS)
+        assert gt_slice.shape == (GRID_ROWS, GRID_COLS)
 
         filename_stem = f"{id_}_{idz:04d}"
 
@@ -224,6 +246,10 @@ def main(args: argparse.Namespace):
         json.dump({"mean": mean, "std": std}, f, indent=2)
         print(f"Saved normalization stats to {f.name}")
 
+    # Precompute once what  "real air" (CLIP_MIN) becomse after normalization. Used as the fill value for padded regions in
+    # slice_patient(), so padding represents actual air in the same normalized space the network sees, rather than an arbitrary value.
+    pad_fill_value = (CLIP_MIN - mean) / std
+
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
     split_ids: list[str]
@@ -238,6 +264,7 @@ def main(args: argparse.Namespace):
                                  shape=tuple(args.shape),
                                  mean=mean,
                                  std=std,
+                                 pad_fill_value=pad_fill_value,
                                  test_mode=mode == 'test')
         resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
