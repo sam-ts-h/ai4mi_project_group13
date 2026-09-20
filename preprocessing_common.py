@@ -11,8 +11,8 @@ from skimage.transform import resize
 # Constants, derived from the EDA (eda_segthor.py) run on the training set
  
 # Foreground 0.5/99.5 percentile HU clip range (see analyze_intensity()).
-CLIP_MIN = -1000.0
-CLIP_MAX = 239.0
+CLIP_MIN = -996.0,
+CLIP_MAX = 254.0
 
 # Target in-plane spacing (mm/voxel) everything gets resampled to. dz is deliberately not resampled since this pipeline still
 # treats every slice as an independent 2D training sample, so z spacing never enters the data the network sees.
@@ -86,7 +86,6 @@ def crop_or_pad_to_grid(arr: np.ndarray, target_rows: int, target_cols: int,
  
     out[out_r0:out_r1, out_c0:out_c1] = arr[src_r0:src_r1, src_c0:src_c1]
     return out
-
 
 
 # Resampling to a common in-plane spacing:
