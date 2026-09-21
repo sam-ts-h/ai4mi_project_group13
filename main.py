@@ -87,8 +87,14 @@ def gt_transform(K, img):
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Networks and scheduler
-    gpu: bool = args.gpu and torch.cuda.is_available()
-    device = torch.device("cuda") if gpu else torch.device("cpu")
+    gpu: bool = args.gpu and (torch.cuda.is_available() or torch.backends.mps.is_available())
+    if gpu:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("mps")
+    else:
+        torch.device("cpu")
     print(f">> Picked {device} to run experiments")
 
     K: int = datasets_params[args.dataset]['K']
@@ -103,9 +109,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / args.dataset
-
-
+    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
 
     train_set = SliceDataset('train',
                              root_dir,
@@ -133,6 +137,12 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 def runTraining(args):
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed) 
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
@@ -247,7 +257,13 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--epochs', default=20, type=int)
-    parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
+    parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys(),
+                        help="Which network/K/batch-size config to use.")
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help="Optional: folder name under data/ to actually read from, if it "
+                             "differs from --dataset (e.g. one of the ablation folders like "
+                             "SEGTHOR_clip). Config (K, network, batch size) still comes from "
+                             "--dataset, e.g. --dataset SEGTHOR --data_dir SEGTHOR_clip.")
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
@@ -256,6 +272,7 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument('--seed', default=0, type=int, help="Random seed for weight init and shuffling.")
 
     args = parser.parse_args()
 

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -e  # stop on the first failure, rather than silently continuing
 
-# Same --epochs for every run, so the comparison is fair (same training
-# budget per combo). Change here if you want a different value.
+# Same --epochs for every run, so the comparison is fair.
 EPOCHS=25
 
 run() {
@@ -13,8 +12,8 @@ run() {
         --epochs $EPOCHS --gpu
 }
 
-run SEGTHOR_none               none
-run SEGTHOR_clip               clip
+# run SEGTHOR_none               none
+# run SEGTHOR_clip               clip
 run SEGTHOR_clip_resample      clip_resample
 run SEGTHOR_resample           resample
 run SEGTHOR_normalize          normalize
