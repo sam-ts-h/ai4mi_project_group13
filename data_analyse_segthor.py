@@ -4,11 +4,13 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 #Patients
 source_dir = Path("data/segthor_part1/train")
 
-processed_train_dir = Path("data/SEGTHOR_assignment1/train/img")
+processed_train_dir = Path("data/SEGTHOR/train/img")
 
 train_patient_ids = sorted({
     path.stem.rsplit("_", 1)[0]
@@ -82,6 +84,8 @@ for patient_dir in patient_dirs:
 
 print("\nHU-waarden per class over alle patiënten:")
 
+
+
 for class_id in sorted(hu_values_per_class):
     hu_values = np.concatenate(hu_values_per_class[class_id])
 
@@ -138,30 +142,6 @@ for patient_dir in patient_dirs:
 
 # Extra bestanden controleren
 
-print("\nExtra CT van Patient_01 controleren:")
-
-ct_1_image = nib.load(source_dir / "Patient_01" / "Patient_01.nii.gz")
-ct_2_image = nib.load(source_dir / "Patient_01" / "Patient_01_1.nii.gz")
-
-ct_1 = ct_1_image.get_fdata()
-ct_2 = ct_2_image.get_fdata()
-
-print("Shape eerste CT:", ct_1.shape)
-print("Shape tweede CT:", ct_2.shape)
-print("Dezelfde shape:", ct_1.shape == ct_2.shape)
-print("Dezelfde spacing:", np.allclose(
-    ct_1_image.header.get_zooms()[:3],
-    ct_2_image.header.get_zooms()[:3],
-))
-print("Dezelfde affine:", np.allclose(
-    ct_1_image.affine,
-    ct_2_image.affine,
-))
-
-if ct_1.shape == ct_2.shape:
-    print("Exact dezelfde CT-waarden:", np.array_equal(ct_1, ct_2))
-
-
 print("\nExtra GT van Patient_07 controleren:")
 
 gt_1_image = nib.load(source_dir / "Patient_07" / "GT.nii.gz")
@@ -191,6 +171,75 @@ if gt_1.shape == gt_2.shape:
         np.mean(gt_1 != gt_2) * 100,
         "%",
     )
+
+#violin boxplot
+rng = np.random.default_rng(42)
+
+plot_rows = []
+
+for class_id in sorted(hu_values_per_class):
+    hu_values = np.concatenate(hu_values_per_class[class_id])
+
+    sample_size = min(50000, len(hu_values))
+    hu_sample = rng.choice(
+        hu_values,
+        size=sample_size,
+        replace=False,
+    )
+
+    for value in hu_sample:
+        plot_rows.append({
+            "Class ID": class_id,
+            "Organ": class_names[class_id],
+            "HU": value
+        })
+
+plot_df = pd.DataFrame(plot_rows)
+
+
+plt.figure(figsize=(10, 6))
+
+sns.violinplot(
+    data=plot_df,
+    x="Organ",
+    y="HU",
+    inner=None,
+    cut=0
+)
+
+sns.boxplot(
+    data=plot_df,
+    x="Organ",
+    y="HU",
+    width=0.2,
+    showcaps=True,
+    boxprops={"facecolor": "white", "zorder": 3},
+    whiskerprops={"zorder": 3},
+    flierprops={
+        "marker": ".",
+        "markersize": 2,
+        "alpha": 0.3,
+    }
+)
+
+plt.title("HU distribution per organ")
+plt.ylabel("HU value")
+plt.xlabel("Organ")
+plt.grid(axis="y", alpha=0.3)
+
+output_dir = Path("results/segthor_analysis")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+plt.tight_layout()
+plt.savefig(
+    output_dir / "hu_violin_boxplot_per_organ.png",
+    dpi=300,
+    bbox_inches="tight",
+)
+plt.show()
+
+
+
 
 # Boxplot van HU-waarden per class
 
@@ -230,6 +279,16 @@ for ax, class_id in zip(axes, class_ids):
     ax.set_ylabel("HU-waarde")
     ax.grid(axis="y", alpha=0.3)
 
-plt.suptitle("Verdeling van HU-waarden per class")
+plt.suptitle("HU distribution per organ")
 plt.tight_layout()
+
+output_dir = Path("results/segthor_analysis")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+plt.savefig(
+    output_dir / "hu_boxplot_per_organ.png",
+    dpi=300,
+    bbox_inches="tight",
+)
+
 plt.show()
