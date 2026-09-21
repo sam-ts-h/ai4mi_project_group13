@@ -109,6 +109,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
                              augmentation = args.augmentation,
+                             augmentation_probability=args.augmentation_probability,
                              debug=args.debug)
     train_loader = DataLoader(train_set,
                               batch_size=B,
@@ -252,10 +253,24 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
-    parser.add_argument( '--augmentation', default='none',
-    choices=['none', 'rotation', 'translation', 'scaling', 'combination'],
-    help="Data augmentation applied to the training images."
-)
+    parser.add_argument('--augmentation', default='none',
+    choices=[
+        'none',
+        'rotation',
+        'translation',
+        'scaling',
+        'combination',
+    ],
+    help="Data augmentation applied to the training images.")
+
+    parser.add_argument('--augmentation-probability', default=1.0,
+        type=float,
+        help=(
+            "Probability of applying the selected augmentation. "
+            "For combination, this probability is applied independently "
+            "to rotation, translation, and scaling."
+        )
+    )
 
 
     args = parser.parse_args()
