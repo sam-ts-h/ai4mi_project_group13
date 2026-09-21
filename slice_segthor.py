@@ -95,11 +95,20 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
 
     gt: np.ndarray
     if not test_mode:
-        gt_path: Path = id_path / "GT.nii.gz"
+        #gt_path: Path = id_path / "GT.nii.gz"
+        gt_path: Path = id_path / "GT_correct.nii.gz"
         gt_nib = nib.load(str(gt_path))
         # print(nib_obj.affine, gt_nib.affine)
         gt = np.asarray(gt_nib.dataobj)
         assert sanity_gt(gt, ct)
+
+
+        assert np.allclose(nib_obj.affine, gt_nib.affine), (
+            f"CT/GT affine mismatch for {id_}"
+        )
+        assert set(np.unique(gt).tolist()) == {0, 1, 2, 3, 4}, (
+            f"Unexpected classes for {id_}: {np.unique(gt)}"
+        )
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
@@ -134,24 +143,80 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
 
     return dx, dy, dz
 
+EXCLUDED_PATIENTS = {
+    "Patient_05",
+    "Patient_15",
+    "Patient_17",
+    "Patient_19",
+}
 
-def get_splits(src_path: Path, retains: int, fold: int) -> tuple[list[str], list[str], list[str]]:
-    ids: list[str] = sorted(map_(lambda p: p.name, (src_path / 'train').glob('*')))
-    print(f"Founds {len(ids)} in the id list")
-    print(ids[:10])
-    assert len(ids) > retains
+def get_splits(
+    src_path: Path,
+    retains: int,
+    fold: int
+) -> tuple[list[str], list[str], list[str]]:
+    train_path = src_path / "train"
 
-    random.shuffle(ids)  # Shuffle before to avoid any problem if the patients are sorted in any way
-    validation_slice = slice(fold * retains, (fold + 1) * retains)
-    validation_ids: list[str] = ids[validation_slice]
+    all_patient_ids = sorted(
+        path.name
+        for path in train_path.glob("Patient_*")
+        if path.is_dir()
+    )
+
+    ids = [
+        patient_id
+        for patient_id in all_patient_ids
+        if patient_id not in EXCLUDED_PATIENTS
+    ]
+
+    print(f"Found {len(all_patient_ids)} patient folders")
+    print(f"Excluded patients: {sorted(EXCLUDED_PATIENTS)}")
+    print(f"Usable patients: {ids}")
+
+    assert len(all_patient_ids) == 20, (
+        f"Expected 20 patient folders, found {len(all_patient_ids)}"
+    )
+    assert len(ids) == 16, (
+        f"Expected 16 usable patients, found {len(ids)}"
+    )
+    assert retains == 4, (
+        f"This experiment requires 4 validation patients, got {retains}"
+    )
+
+    random.shuffle(ids)
+
+    validation_slice = slice(
+        fold * retains,
+        (fold + 1) * retains
+    )
+    validation_ids = ids[validation_slice]
+
     assert len(validation_ids) == retains
 
-    training_ids: list[str] = [e for e in ids if e not in validation_ids]
-    assert (len(training_ids) + len(validation_ids)) == len(ids)
+    training_ids = [
+        patient_id
+        for patient_id in ids
+        if patient_id not in validation_ids
+    ]
 
-    test_ids: list[str] = sorted(map_(lambda p: Path(p.stem).stem, (src_path / 'test').glob('*')))
-    print(f"Founds {len(test_ids)} test ids")
-    print(test_ids[:10])
+    assert len(training_ids) == 12
+    assert len(validation_ids) == 4
+    assert set(training_ids).isdisjoint(validation_ids)
+    assert not set(training_ids) & EXCLUDED_PATIENTS
+    assert not set(validation_ids) & EXCLUDED_PATIENTS
+
+    test_path = src_path / "test"
+    if test_path.exists():
+        test_ids = sorted(
+            Path(path.stem).stem
+            for path in test_path.glob("*")
+        )
+    else:
+        test_ids = []
+
+    print(f"Training IDs ({len(training_ids)}): {training_ids}")
+    print(f"Validation IDs ({len(validation_ids)}): {validation_ids}")
+    print(f"Test IDs ({len(test_ids)}): {test_ids}")
 
     return training_ids, validation_ids, test_ids
 
@@ -168,6 +233,21 @@ def main(args: argparse.Namespace):
     validation_ids: list[str]
     test_ids: list[str]
     training_ids, validation_ids, test_ids = get_splits(src_path, args.retains, args.fold)
+
+    dest_path.mkdir(parents=True, exist_ok=False)
+
+    with open(dest_path / "split.txt", "w") as split_file:
+        split_file.write(f"seed={args.seed}\n")
+        split_file.write(f"fold={args.fold}\n")
+        split_file.write(
+            f"excluded={','.join(sorted(EXCLUDED_PATIENTS))}\n"
+        )
+        split_file.write(
+            f"train={','.join(training_ids)}\n"
+        )
+        split_file.write(
+            f"val={','.join(validation_ids)}\n"
+        )
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
