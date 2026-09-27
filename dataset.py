@@ -29,6 +29,8 @@ from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
 
+import torch
+
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     assert subset in ['train', 'val', 'test']
@@ -51,12 +53,13 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augment=False, equalize=False, debug=False, context_size: int = 1):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: bool = augment
         self.equalize: bool = equalize
+        self.context_size: int = context_size
 
         self.test_mode: bool = subset == 'test'
 
@@ -69,10 +72,34 @@ class SliceDataset(Dataset):
     def __len__(self):
         return len(self.files)
 
+    def _patient_id(self, img_path: Path) -> str:
+        return img_path.stem.rsplit('_', 1)[0]
+
+    def _get_neighbour_path(self, index:int, offset:int) -> Path:
+        center_path, _ = self.files[index]
+        neighbor_index = index + offset
+
+        #padding
+        if neighbor_index < 0 or neighbor_index >= len(self.files):
+            return center_path
+        neighbor_path, _ = self.files[neighbor_index]
+        if self._patient_id(neighbor_path) != self._patient_id(center_path):
+            return center_path
+        return neighbor_path
+
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        half = self.context_size // 2
+        slice_paths = []
+        for offset in range (-half, half+1):
+            slice_paths.append(self._get_neighbour_path(index, offset))
+
+        channels = []
+        for p in slice_paths:
+            channels.append(self.img_transform(Image.open(p)))
+
+        img: Tensor = torch.cat(channels, dim=0)
 
         data_dict = {"images": img,
                      "stems": img_path.stem}

@@ -182,9 +182,9 @@ class ENet(nn.Module):
                 #                          BottleNeckDownSampling,
                 #                          BottleNeckUpSampling,
                 #                          conv_block)
-
+                self.channel_fusion = (nn.Conv2d(in_dim, 1, kernel_size=1) if in_dim != 1 else nn.Identity())
                 # Initial operations
-                self.conv0 = nn.Conv2d(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
+                self.conv0 = nn.Conv2d(1, K - 1, kernel_size=3, stride=2, padding=1)
                 self.maxpool0 = nn.MaxPool2d(2, return_indices=False, ceil_mode=False)
 
                 # Downsampling half
@@ -228,6 +228,7 @@ class ENet(nn.Module):
                 print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}) with {kwargs}")
 
         def forward(self, input):
+                input = self.channel_fusion(input)
                 # Initial operations
                 conv_0 = self.conv0(input)
                 maxpool_0 = self.maxpool0(input)
