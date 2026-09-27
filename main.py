@@ -266,6 +266,7 @@ def main():
         'rotation',
         'translation',
         'scaling',
+        'noise',
         'combination',
     ],
     help="Data augmentation applied to the training images.")

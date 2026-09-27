@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 import random
+import torch
 
 from pathlib import Path
 from typing import Callable, Union
@@ -61,6 +62,8 @@ class SliceDataset(Dataset):
         self.gt_transform: Callable = gt_transform
         self.augmentation: str = augmentation
         self.augmentation_probability: float = augmentation_probability
+        self.subset = subset
+
         if not 0.0 <= self.augmentation_probability <= 1.0:
             raise ValueError(
                 f"augmentation_probability must be in [0.0, 1.0], got {self.augmentation_probability}"
@@ -94,6 +97,7 @@ class SliceDataset(Dataset):
                     "rotation",
                     "translation",
                     "scaling",
+                    "noise",
                 }
                 and random.random() >= self.augmentation_probability
             ):
@@ -218,12 +222,24 @@ class SliceDataset(Dataset):
                         fill=0
                     )
 
-            elif augmentation != "none":
-                raise ValueError(
-                    f"Unknown augmentation: {augmentation}"
-                )
+            elif augmentation not in {"none", "noise"}:
+                raise ValueError(f"Unknown augmentation: {augmentation}")
 
         img: Tensor = self.img_transform(img_open)
+
+        if self.subset == "train":
+            apply_noise = (
+                augmentation == "noise"
+                or (
+                    augmentation == "combination"
+                    and random.random() < self.augmentation_probability
+                )
+            )
+
+            if apply_noise:
+                img = (img + torch.randn_like(img) * 0.03).clamp(0.0, 1.0)
+
+
 
         data_dict = {"images": img,
                      "stems": img_path.stem}
