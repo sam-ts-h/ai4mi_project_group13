@@ -166,7 +166,7 @@ class SliceDataset(Dataset):
                                     interpolation=InterpolationMode.NEAREST,
                                     fill=0
                                 )
-            elif augmentation == "combination":
+            elif augmentation in {"combination", "combination_no_noise"}:
                 probability = self.augmentation_probability
 
                 apply_rotation = random.random() < probability
