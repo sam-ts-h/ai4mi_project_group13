@@ -38,7 +38,7 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from utils import map_, tqdm_
-from preprocessing_common import (CLIP_MIN, CLIP_MAX, GRID_ROWS, GRID_COLS,
+from preprocessing_common import (GRID_ROWS, GRID_COLS,
                                   resample_image_slice, resample_mask_slice,
                                   body_mask_2d, body_centroid, crop_or_pad_to_grid)
 
@@ -46,7 +46,7 @@ from preprocessing_common import (CLIP_MIN, CLIP_MAX, GRID_ROWS, GRID_COLS,
 # Used only to define what "air" means for the padding fill value when --clip is not passed.
 RAW_AIR_FLOOR = -1000.0
 
-def clip_ct(img: np.ndarray) -> np.ndarray:
+def clip_ct(img: np.ndarray, clip_min: float, clip_max: float) -> np.ndarray:
     """
     Clip raw HU values to the dataset's foreground percentile range, no rescale to 0-255. 
     This replaces the old norm_arr() lossy per-slice min-max normalization: the network now receives real, clipped HU values
@@ -54,7 +54,7 @@ def clip_ct(img: np.ndarray) -> np.ndarray:
     (assuming consistent HU values from scanner etc), regardless of what else happens to be in that particular slice, 
     which per-slice min-max could not guarantee).
     """
-    return np.clip(img.astype(np.float32), CLIP_MIN, CLIP_MAX)
+    return np.clip(img.astype(np.float32), clip_min, clip_max)
 
 
 def sanity_ct(ct, x, y, z, dx, dy, dz) -> bool:
@@ -99,7 +99,7 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
 
     gt: np.ndarray
     if not test_mode:
-        gt_path: Path = id_path / "GT_correct.nii.gz"
+        gt_path: Path = id_path / "GT.nii.gz"
         gt_nib = nib.load(str(gt_path))
         gt = np.asarray(gt_nib.dataobj)
         assert sanity_gt(gt, ct)
@@ -108,8 +108,29 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
 
     return ct, gt, (dx, dy, dz)
 
+def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: int = 20_000) -> tuple[float, float]:
+    """
+    Clip range = 0.5 / 99.5 percentiles of the foreground (organ-labeled) HU values, computed over the training patients
+    only, so validation data never influences the preprocessing (avoid data leakage). Same calculation as analyze_intensity() 
+    in eda_segthor.py: per patient and per organ class, subsample up to n_samples voxels, then pool everything. The subsampling uses a fixed 
+    rng, so re-running gives the identical range for reproducibility.
+    """
+    rng = np.random.default_rng(0)
+    samples = []
+    for id_ in tqdm_(training_ids, desc="Computing clip range"):
+        ct, gt, _ = load_patient_ct(id_, source_path, test_mode=False)
+        for k in np.unique(gt):
+            if k == 0:  # background is not foreground
+                continue
+            vals = ct[gt == k]
+            if vals.size > n_samples:
+                vals = rng.choice(vals, n_samples, replace=False)
+            samples.append(vals)
+    low, high = np.percentile(np.concatenate(samples), [0.5, 99.5])
+    return float(low), float(high)
+
 def compute_global_stats(training_ids: list[str], source_path: Path,
-                         use_clip: bool, use_resample: bool, shape: tuple[int, int]):
+                         clip_range: tuple[float, float], use_resample: bool, shape: tuple[int, int]):
     """
     Two-pass normalization. pass 1: compute a single dataset-wide mean and std, over every pixel of every clipped, resampled 
     training slice (never validation or test, since computing stats from data you'll later evaluate on is data leakage). 
@@ -122,7 +143,7 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
 
     for id_ in tqdm_(training_ids, desc="Computing normalization stats (pass 1/2)"):
         ct, _, (dx, dy, _) = load_patient_ct(id_, source_path, test_mode=False)
-        ct = clip_ct(ct) if use_clip else ct.astype(np.float32)
+        ct = clip_ct(ct, *clip_range) if clip_range else ct.astype(np.float32)
         z = ct.shape[2]
         for idz in range(z):
             if use_resample:
@@ -143,13 +164,13 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
     return float(mean), std
 
 
-def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], use_clip: bool, use_resample: bool, 
+def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, 
                   use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
     ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = ct.shape[2]
 
     # Do the percentile clipping if needed.
-    ct = clip_ct(ct) if use_clip else ct.astype(np.float32)
+    ct = clip_ct(ct, *clip_range) if clip_range else ct.astype(np.float32)
 
     img_save_path: Path = Path(dest_path, "img")
     gt_save_path: Path = Path(dest_path, "gt")
@@ -254,10 +275,18 @@ def main(args: argparse.Namespace):
     test_ids: list[str]
     training_ids, validation_ids, test_ids = get_splits(src_path, args.retains, args.fold)
 
+    # Clip range from the training patients only (avoid data leakage)
+    if args.clip:
+        print(">> Computing the clip range over the training set...")
+        clip_range = compute_clip_range(training_ids, src_path )
+        print(f">> clip range = [{clip_range[0]:.1f}, {clip_range[1]:.1f}]")
+    else:
+        clip_range = None
+
     if args.normalize:
         # Pass one over data: Compute dataset normalization stats from training data only (avoid data leakage)
         print(">> Computing normalization statistics over the training set...")
-        mean, std = compute_global_stats(training_ids, src_path, args.clip, args.resample, tuple(args.shape))
+        mean, std = compute_global_stats(training_ids, src_path, clip_range, args.resample, tuple(args.shape))
         print(f">> mean={mean:.3f}, std={std:.3f}")
     else:
         mean, std = None, None
@@ -273,7 +302,7 @@ def main(args: argparse.Namespace):
     # slice_patient(), so padding represents actual air in the same normalized space the network sees, rather than an arbitrary value.
     # Air floor is CLIP_MIN if clipping is on for this run, otherwise the dataset's raw HU floor (RAW_AIR_FLOOR). 
     # If normalizing, that air value also needs to go through the same z-score transform real pixels get; if not, it's used exactly as-is.
-    air_value = CLIP_MIN if args.clip else RAW_AIR_FLOOR
+    air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
     pad_fill_value = (air_value - mean) / std if args.normalize else air_value
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
@@ -288,7 +317,7 @@ def main(args: argparse.Namespace):
                                  dest_path=dest_mode,
                                  source_path=src_path,
                                  shape=tuple(args.shape),
-                                 use_clip=args.clip,
+                                 clip_range=clip_range,
                                  use_resample=args.resample,
                                  use_normalize=args.normalize,
                                  mean=mean,
