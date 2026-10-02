@@ -292,18 +292,18 @@ def main(args: argparse.Namespace):
         mean, std = None, None
         print(">> --normalize not set, so skipping stats computation")
 
-    # Save stats for future efficiency
-    dest_path.mkdir(parents=True, exist_ok=True)
-    with open(dest_path / "normalization_stats.json", "w") as f:
-        json.dump({"mean": mean, "std": std}, f, indent=2)
-        print(f"Saved normalization stats to {f.name}")
-
     # Precompute once what  "real air" (CLIP_MIN) becomse after normalization. Used as the fill value for padded regions in
     # slice_patient(), so padding represents actual air in the same normalized space the network sees, rather than an arbitrary value.
     # Air floor is CLIP_MIN if clipping is on for this run, otherwise the dataset's raw HU floor (RAW_AIR_FLOOR). 
     # If normalizing, that air value also needs to go through the same z-score transform real pixels get; if not, it's used exactly as-is.
     air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
     pad_fill_value = (air_value - mean) / std if args.normalize else air_value
+
+    # Save stats for future efficiency
+    dest_path.mkdir(parents=True, exist_ok=True)
+    with open(dest_path / "normalization_stats.json", "w") as f:
+        json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value}, f, indent=2)
+        print(f"Saved normalization stats to {f.name}")
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
