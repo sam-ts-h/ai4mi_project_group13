@@ -120,7 +120,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    net = datasets_params[args.dataset]['net'](args.context_size, K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
@@ -136,7 +136,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              gt_transform= partial(gt_transform, K),
                              augmentation = args.augmentation,
                              augmentation_probability=args.augmentation_probability,
-                             debug=args.debug)
+                             debug=args.debug,
+                             context_size = args.context_size)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
@@ -147,7 +148,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
                            augmentation="none", augmentation_probability=1.0,
-                           debug=args.debug)
+                           debug=args.debug,
+                           context_size = args.context_size)
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,
@@ -313,6 +315,7 @@ def main():
         )
     )
 
+    parser.add_argument('--context_size', type=int, default = 1, help = 'number of slices to stack as channels, if context = 1 (2D) if more (2.5D), has to be an odd number')
     args = parser.parse_args()
     pprint(args)
     runTraining(args)

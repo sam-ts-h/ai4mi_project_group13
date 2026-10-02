@@ -88,6 +88,7 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
     Load one patient's raw CT (and GT, unless test_mode). Factored out clipping since both slice_patient() and 
     compute_global_stats() need to load and clip the same raw data.
     """
+
     id_path: Path = source_path / ("train" if not test_mode else "test") / id_
 
     ct_path: Path = (id_path / f"{id_}.nii.gz") if not test_mode else (source_path / "test" / f"{id_}.nii.gz")
