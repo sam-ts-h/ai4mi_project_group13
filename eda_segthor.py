@@ -493,7 +493,7 @@ def main(args: argparse.Namespace) -> None:
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="EDA for the SegTHOR dataset")
-    parser.add_argument("--source_dir", type=str, default="data/segthor_part1",
+    parser.add_argument("--source_dir", type=str, default="data/SEGTHOR_VOLUMES_FINAL",
                         help="Folder containing train/Patient_XX/... (raw NIfTI data)")
     parser.add_argument("--dest_dir", type=str, default="eda_output",
                         help="Where to write CSVs and plots")
