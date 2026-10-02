@@ -24,6 +24,7 @@
 
 import argparse
 import warnings
+import random
 from typing import Any
 from pathlib import Path
 from pprint import pprint
@@ -58,6 +59,10 @@ datasets_params: dict[str, dict[str, Any]] = {}
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+for split_seed in (42, 43, 44):
+    datasets_params[f"SEGTHOR_full_split{split_seed}"] = datasets_params["SEGTHOR"].copy()
+
 
 def img_transform(img):
         img = img.convert('L')
@@ -78,7 +83,17 @@ def gt_transform(K, img):
         return img[0]
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
-    # Networks and scheduler
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Networks and scheduler
     gpu: bool = args.gpu and torch.cuda.is_available()
     device = torch.device("cuda") if gpu else torch.device("cpu")
     print(f">> Picked {device} to run experiments")
@@ -103,6 +118,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
+                             augmentation = args.augmentation,
+                             augmentation_probability=args.augmentation_probability,
                              debug=args.debug)
     train_loader = DataLoader(train_set,
                               batch_size=B,
@@ -235,6 +252,7 @@ def runTraining(args):
 def main():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
@@ -245,6 +263,28 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument('--augmentation', default='none',
+    choices=[
+        'none',
+        'rotation',
+        'translation',
+        'scaling',
+        'noise',
+        'combination',
+        'combination_no_noise',
+
+    ],
+    help="Data augmentation applied to the training images.")
+
+    parser.add_argument('--augmentation-probability', default=1.0,
+        type=float,
+        help=(
+            "Probability of applying the selected augmentation. "
+            "For combination, this probability is applied independently "
+            "to rotation, translation, and scaling."
+        )
+    )
+
 
     args = parser.parse_args()
 
