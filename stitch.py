@@ -58,6 +58,7 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
         z = get_z(img)
         img_arr = imread(img)
         assert img_arr.dtype == np.uint8
+        img_arr = img_arr // 63
         assert set(np.unique(img_arr)) <= set(range(K))
 
         resized: np.ndarray = resize(img_arr, (X, Y),
@@ -66,16 +67,16 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
                                      anti_aliasing=False,
                                      order=0)
 
-        res_arr[:, :, z] = resized[...]
+    res_arr = res_arr.astype(np.int16)
 
-    assert set(np.unique(res_arr)) <= set(range(K))
+    assert set(np.unique(res_arr)) <= set(range(K)), np.uint8(res_arr)
     assert orig_shape == res_arr.shape, (orig_shape, res_arr.shape)
 
-    # res_arr = res_arr.astype(np.int16)
-    res_arr //= 63  # For segthor only
-    assert set(np.unique(res_arr)) == set(range(5)), np.uint8(res_arr)
-
-    new_nib = nib.nifti1.Nifti1Image(res_arr, affine=orig_nib.affine, header=orig_nib.header)
+    new_nib = nib.nifti1.Nifti1Image(
+        res_arr,
+        affine=orig_nib.affine,
+        header=orig_nib.header
+    )
     nib.save(new_nib, (Path(dest_folder) / id_).with_suffix(".nii.gz"))
 
 

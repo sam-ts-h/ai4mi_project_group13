@@ -1,0 +1,43 @@
+nohup: ignoring input
+Namespace(source_dir='data', dest_dir='data/SEGTHOR_split42_fold0', shape=[256, 256], retains=10, seed=42, fold=0, process=1, clip=False, resample=False, normalize=False)
+Founds 40 in the id list
+['Patient_01', 'Patient_02', 'Patient_03', 'Patient_04', 'Patient_05', 'Patient_06', 'Patient_07', 'Patient_08', 'Patient_09', 'Patient_10']
+Founds 0 test ids
+[]
+>> --normalize not set, so skipping stats computation
+Saved normalization stats to data/SEGTHOR_split42_fold0/normalization_stats.json
+Slicing 30 pairs to data/SEGTHOR_split42_fold0/train
+  0%|          | 0/30 [?it/s]  0%|          | 0/30 [?it/s]
+Traceback (most recent call last):
+  File "/home/mjp104/ai4mi_project_group13/slice_segthor.py", line 373, in <module>
+    main(get_args())
+  File "/home/mjp104/ai4mi_project_group13/slice_segthor.py", line 332, in main
+    resolutions = list(map(pfun, iterator))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mjp104/ai4mi_project_group13/slice_segthor.py", line 170, in slice_patient
+    ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mjp104/ai4mi_project_group13/slice_segthor.py", line 96, in load_patient_ct
+    ct: np.ndarray = np.asarray(nib_obj.dataobj)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/local/.old/mjp104/python_env/lib/python3.12/site-packages/nibabel/arrayproxy.py", line 455, in __array__
+    arr = self._get_scaled(dtype=dtype, slicer=())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/local/.old/mjp104/python_env/lib/python3.12/site-packages/nibabel/arrayproxy.py", line 422, in _get_scaled
+    scaled = apply_read_scaling(self._get_unscaled(slicer=slicer), scl_slope, scl_inter)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/local/.old/mjp104/python_env/lib/python3.12/site-packages/nibabel/arrayproxy.py", line 392, in _get_unscaled
+    return array_from_file(
+           ^^^^^^^^^^^^^^^^
+  File "/local/.old/mjp104/python_env/lib/python3.12/site-packages/nibabel/volumeutils.py", line 464, in array_from_file
+    n_read = infile.readinto(data_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.12/gzip.py", line 324, in read
+    return self._buffer.read(size)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.12/_compression.py", line 68, in readinto
+    data = self.read(len(byte_view))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.12/gzip.py", line 547, in read
+    raise EOFError("Compressed file ended before the "
+EOFError: Compressed file ended before the end-of-stream marker was reached

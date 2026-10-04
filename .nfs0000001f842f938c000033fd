@@ -1,0 +1,5 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/home/mjp104/ai4mi_project_group13/slice_segthor.py", line 37, in <module>
+    from skimage.io import imsave
+ModuleNotFoundError: No module named 'skimage'

@@ -311,7 +311,7 @@ class SliceDataset(Dataset):
 
         channels = []
         for p in slice_paths:
-            channels.append(self.img_transform(Image.open(p)))
+            channels.append(torch.from_numpy(np.load(p)).float().unsqueeze(0) if p.suffix == ".npy" else self.img_transform(np.array(Image.open(p))))
 
         img: Tensor = torch.cat(channels, dim=0)
 
