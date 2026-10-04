@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 import re
+import pickle
 import argparse
 from itertools import repeat
 from pathlib import Path
@@ -34,6 +35,7 @@ from skimage.io import imread
 from skimage.transform import resize
 
 from utils import map_, tqdm_
+from preprocessing_common import GRID_ROWS, GRID_COLS, compute_resampled_shape
 
 
 def get_z(image: Path) -> int:
@@ -41,7 +43,7 @@ def get_z(image: Path) -> int:
 
 
 def merge_patient(id_: str, dest_folder: str, images: list[Path],
-                  idxes: list[int], K: int, source_pattern: str) -> None:
+                  idxes: list[int], K: int, source_pattern: str, cropCenters: dict | None = None) -> None:
     # print(source_pattern.format(id_=id_))
     orig_nib = nib.load(source_pattern.format(id_=id_))
     orig_shape = np.asarray(orig_nib.dataobj).shape
@@ -59,6 +61,25 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
         img_arr = imread(img)
         assert img_arr.dtype == np.uint8
         assert set(np.unique(img_arr)) <= set(range(K))
+
+        # Undo the crop/pad of slice_segthor.py --resample: put the prediction back on the resampled slice
+        # at the same window, anything outside the window was never predicted so its background
+        if cropCenters is not None:
+            rows, cols = compute_resampled_shape((X, Y), orig_nib.header.get_zooms()[:2])
+            centerR, centerC = cropCenters[img.stem]
+            # same window start as crop_or_pad_to_grid
+            rStart = int(round(centerR - GRID_ROWS / 2))
+            cStart = int(round(centerC - GRID_COLS / 2))
+
+            # part of the window that lies inside the resampled slice
+            r0 = max(rStart, 0)
+            r1 = min(rStart + GRID_ROWS, rows)
+            c0 = max(cStart, 0)
+            c1 = min(cStart + GRID_COLS, cols)
+
+            uncropped = np.zeros((rows, cols), dtype=np.uint8)
+            uncropped[r0:r1, c0:c1] = img_arr[r0 - rStart:r1 - rStart, c0 - cStart:c1 - cStart]
+            img_arr = uncropped
 
         resized: np.ndarray = resize(img_arr, (X, Y),
                                      mode="constant",
@@ -104,8 +125,13 @@ def main(args) -> None:
 
     args.dest_folder.mkdir(parents=True, exist_ok=True)
 
+    cropCenters = None
+    if args.crop_centers:
+        with open(args.crop_centers, 'rb') as f:
+            cropCenters = pickle.load(f)
+
     for p in tqdm_(unique_patients):
-        merge_patient(p, args.dest_folder, images, idx_map[p], args.num_classes, args.source_scan_pattern)
+        merge_patient(p, args.dest_folder, images, idx_map[p], args.num_classes, args.source_scan_pattern, cropCenters)
     # mmap_(lambda p: merge_patient(p, args.dest_folder, images, idx_map[p], K=args.num_classes), patients)
 
 
@@ -119,6 +145,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--grp_regex', type=str, required=True)
 
     parser.add_argument('--num_classes', type=int, default=4)
+    parser.add_argument('--crop_centers', type=Path, default=None,
+                        help="crop_centers.pkl from slice_segthor.py --resample, to undo the crop. Leave out for the old fixed resize data.")
 
     args = parser.parse_args()
 

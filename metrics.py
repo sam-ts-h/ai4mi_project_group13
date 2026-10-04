@@ -7,7 +7,7 @@ from scipy.ndimage import binary_erosion, distance_transform_edt
 from scipy.spatial import cKDTree
 
 nrClasses = 5
-classNames = ["background", "aorta", "heart", "trachea", "esophagus"]
+classNames = ["background", "esophagus", "heart", "trachea", "aorta"]
 metricNames = ["dsc", "hd95", "assd", "fpSliceRate"]
 
 

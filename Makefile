@@ -28,12 +28,8 @@ data/SEGTHOR:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir data/segthor_part1 --dest_dir $@_tmp \
-		--shape 256 256 --retain 5
+		--retain 5 --clip --resample --normalize --distmap
 	mv $@_tmp $@
-
-dataDistmap: data/SEGTHOR
-	$(info $(green)python computeDistanceMaps.py$(reset))
-	python computeDistanceMaps.py --data_dir data/SEGTHOR
 
 outputFile = experiments/exp_cedice
 # ce of ceDice of ceDiceBoundary 
@@ -46,8 +42,9 @@ trainData: data/SEGTHOR
 evalData:
 	python stitch.py --data_folder $(outputFile)/best_epoch/val --dest_folder $(outputFile)/volumes \
 		--num_classes 255 --grp_regex "(Patient_\\d\\d)_\\d\\d\\d\\d" \
-		--source_scan_pattern "data/segthor_part1/train/{id_}/GT.nii.gz"
-	python metrics.py --pred_folder $(outputFile)/volumes --gt_folder data/segthor_part1/train \
+		--source_scan_pattern "data/segthor_train_full/train/{id_}/GT.nii.gz" \
+		--crop_centers data/SEGTHOR/crop_centers.pkl
+	python metrics.py --pred_folder $(outputFile)/volumes --gt_folder data/segthor_train_full/train \
 		--dest_folder $(outputFile)/metrics
 	python plot.py --metric_file $(outputFile)/dice_val.npy --dest $(outputFile)/dice_val.png --headless
 	python plot.py --metric_file $(outputFile)/loss_val.npy --dest $(outputFile)/loss_val.png --headless

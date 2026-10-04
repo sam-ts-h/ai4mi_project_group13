@@ -4,7 +4,7 @@ import numpy as np
 import nibabel as nib
 
 
-dataPath = Path("data/segthor_part1/train")
+dataPath = Path("data/segthor_train_full/train")
 
 allSpacings = []
 allShapes = []
@@ -123,7 +123,7 @@ for folder in sorted(dataPath.iterdir()):
 
 print("\n--summary--\n")
 
-print(f"patients with metal    {len(metalPatients)} of 20 (any voxel over 3000 HU)")
+print(f"patients with metal    {len(metalPatients)} of {len(list(dataPath.iterdir()))} (any voxel over 3000 HU)")
 print(f"                       {metalPatients}")
 
 
@@ -132,7 +132,7 @@ print("\n --huvalues per class---\n")
 
 import matplotlib.pyplot as plt
 
-classNames = {0: "background", 1: "aorta", 2: "heart", 3: "trachea", 4: "esophagus"}
+classNames = {0: "background", 1: "esophagus", 2: "heart", 3: "trachea", 4: "aorta"}
 classColors = {0: "#8A96A3", 1: "#D6413F", 2: "#2D7FC2", 3: "#A8720C", 4: "#7B4FA8"}
 
 # random sample for run times
@@ -214,36 +214,39 @@ print("\nsaved huPerClass.png")
 
 print("\n2D slices!!!\n")
 
-header = "patient; slices; empty; empty percent; aortaSlices; heartSlices; tracheaSlices"
+header = "patient; slices; empty; empty percent; esophagusSlices; heartSlices; tracheaSlices; aortaSlices"
 print(header)
 print("-" * len(header))
 
 totalSlices = 0
 totalEmpty = 0
-totalAorta = 0
+totalEsophagus = 0
 totalHeart = 0
 totalTrachea = 0
+totalAorta = 0
 
 for folder in sorted(dataPath.iterdir()):
     patientId = folder.name
 
     gt = np.asarray(nib.load(str(folder / "GT.nii.gz")).dataobj)
     numSlices = gt.shape[2]
-    hasAorta = (gt == 1).any(axis=(0, 1))
+    hasEsophagus = (gt == 1).any(axis=(0, 1))
     hasHeart = (gt == 2).any(axis=(0, 1))
     hasTrachea = (gt == 3).any(axis=(0, 1))
+    hasAorta = (gt == 4).any(axis=(0, 1))
     #We do or as some slices can contain more than one
-    hasSomething = hasAorta | hasHeart | hasTrachea
+    hasSomething = hasEsophagus | hasHeart | hasTrachea | hasAorta
     emptyCount = numSlices - int(hasSomething.sum())
 
     totalSlices += numSlices
     totalEmpty += emptyCount
-    totalAorta += int(hasAorta.sum())
+    totalEsophagus += int(hasEsophagus.sum())
     totalHeart += int(hasHeart.sum())
     totalTrachea += int(hasTrachea.sum())
+    totalAorta += int(hasAorta.sum())
 
     line = f"{patientId}; {numSlices}; {emptyCount}; {100 * emptyCount / numSlices:.0f}%; "
-    line += f"{int(hasAorta.sum())}; {int(hasHeart.sum())}; {int(hasTrachea.sum())}"
+    line += f"{int(hasEsophagus.sum())}; {int(hasHeart.sum())}; {int(hasTrachea.sum())}; {int(hasAorta.sum())}"
     print(line)
 
 
@@ -251,12 +254,14 @@ print("\nslice summaryy\n")
 
 print(f"total slices           {totalSlices}")
 print(f"empty slices           {totalEmpty} ({100 * totalEmpty / totalSlices:.1f}%)")
-print(f"aorta slices           {totalAorta} ({100 * totalAorta / totalSlices:.1f}%)")
+print(f"esophagus slices       {totalEsophagus} ({100 * totalEsophagus / totalSlices:.1f}%)")
 print(f"heart slices           {totalHeart} ({100 * totalHeart / totalSlices:.1f}%)")
 print(f"trachea slices         {totalTrachea} ({100 * totalTrachea / totalSlices:.1f}%)")
+print(f"aorta slices           {totalAorta} ({100 * totalAorta / totalSlices:.1f}%)")
 
 
 
+# results are not from full data, edited to be sure maybe check later for pp
 '''
 output:
 

@@ -57,13 +57,11 @@ datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
 # Avoids the classes with C (often used for the number of Channel)
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
-# 'scored' is how many classes actually have data. Part 1 has no class 4 (esophagus),
-# so scoring it would hand out a free dice of 1.0 on every single slice.
 datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 for split_seed in (42, 43, 44):
-    datasets_params[f"SEGTHOR_full_split{split_seed}"] = datasets_params["SEGTHOR"].copy()
+    datasets_params[f"SEGTHOR_full_split{split_seed}"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
 
 def img_transform(img):

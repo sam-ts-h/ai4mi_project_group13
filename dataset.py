@@ -119,6 +119,18 @@ class SliceDataset(Dataset):
         if not self.test_mode:
             gt_open = Image.open(gt_path)
 
+            # Loaded before augmentation so it gets the exact same transform as the gt
+            if self.loadDistMaps:
+                distMapPath = gt_path.parent.parent / 'distmap' / f"{gt_path.stem}.npy"
+                distMap = torch.from_numpy(np.load(distMapPath).astype(np.float32))
+                # corners that come in with rotation/translation are background, same reasoning as in slice_segthor.py
+                distFill = []
+                for k in range(distMap.shape[0]):
+                    if k == 0:
+                        distFill.append(distMap[k].min().item())
+                    else:
+                        distFill.append(distMap[k].max().item())
+
             augmentation = self.augmentation
 
             if (
@@ -146,6 +158,8 @@ class SliceDataset(Dataset):
                                     angle=angle,  # random angle
                                     interpolation=InterpolationMode.NEAREST,  # nearest for the mask: keep discrete class values
                                     fill=0)
+                if self.loadDistMaps:
+                    distMap = TF.rotate(distMap, angle=angle, interpolation=InterpolationMode.BILINEAR, fill=distFill)
 
             elif augmentation == "translation":
                 # Move the image by at most 5% of its width and height
@@ -177,6 +191,9 @@ class SliceDataset(Dataset):
                     interpolation=InterpolationMode.NEAREST,
                     fill=0
                 )
+                if self.loadDistMaps:
+                    distMap = TF.affine(distMap, angle=0, translate=translate, scale=1.0, shear=[0.0, 0.0],
+                                        interpolation=InterpolationMode.BILINEAR, fill=distFill)
             elif augmentation == "scaling":
                 # scale the image by a random factor between 0.9 and 1.1
                 scale_factor = random.uniform(0.9, 1.1)
@@ -199,6 +216,9 @@ class SliceDataset(Dataset):
                                     interpolation=InterpolationMode.NEAREST,
                                     fill=0
                                 )
+                if self.loadDistMaps:
+                    distMap = TF.affine(distMap, angle=0, translate=[0, 0], scale=scale_factor, shear=[0.0, 0.0],
+                                        interpolation=InterpolationMode.BILINEAR, fill=distFill)
             elif augmentation in {"combination", "combination_no_noise"}:
                 probability = self.augmentation_probability
 
@@ -255,6 +275,9 @@ class SliceDataset(Dataset):
                         interpolation=InterpolationMode.NEAREST,
                         fill=0
                     )
+                    if self.loadDistMaps:
+                        distMap = TF.affine(distMap, angle=angle, translate=translate, scale=scale_factor, shear=[0.0, 0.0],
+                                            interpolation=InterpolationMode.BILINEAR, fill=distFill)
 
             elif augmentation not in {"none", "noise"}:
                 raise ValueError(f"Unknown augmentation: {augmentation}")
@@ -301,9 +324,7 @@ class SliceDataset(Dataset):
             data_dict["gts"] = gt
 
             if self.loadDistMaps:
-                distMapPath = gt_path.parent.parent / 'distmap' / f"{gt_path.stem}.npy"
-                distMap = np.load(distMapPath).astype(np.float32)
                 assert distMap.shape == gt.shape, 'shape of distmap and gt are not the same.... dataset.py says no'
-                data_dict["distMaps"] = torch.from_numpy(distMap)
+                data_dict["distMaps"] = distMap
 
         return data_dict

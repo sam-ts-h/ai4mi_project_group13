@@ -1,3 +1,6 @@
+# ----------- NOT USED ANYMORE, kept for code lookup... -------------
+# Distance maps are now made in slice_segthor.py (--distmap), on the raw 3D gt before resampling/cropping,
+# because this script assumes the old fixed 512
 import pickle
 import argparse
 from pathlib import Path
