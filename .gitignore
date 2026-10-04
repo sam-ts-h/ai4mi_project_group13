@@ -4,9 +4,10 @@ data/*
 results/
 volumes/
 ai4mi/
+ai4mi_venv/
 __pycache__/
 experiments/
+eda_output/
 
 projects
-
 .DS_Store
