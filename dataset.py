@@ -36,8 +36,6 @@ import numpy as np
 from torchvision.transforms import functional as TF
 from torchvision.transforms import InterpolationMode
 
-import torch
-
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     assert subset in ['train', 'val', 'test']
@@ -66,20 +64,20 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augmentation="combination_no_noise", augmentation_probability=0.5, equalize=False, debug=False, context_size: int = 1):
+                 gt_transform=None, augmentation="combination_no_noise", augmentation_probability=0.5, equalize=False, debug=False, context_size: int =1):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: str = augmentation
         self.augmentation_probability: float = augmentation_probability
         self.subset = subset
+        self.context_size: int = context_size
 
         if not 0.0 <= self.augmentation_probability <= 1.0:
             raise ValueError(
                 f"augmentation_probability must be in [0.0, 1.0], got {self.augmentation_probability}"
             )
         self.equalize: bool = equalize
-        self.context_size: int = context_size
 
         self.test_mode: bool = subset == 'test'
 
@@ -100,19 +98,18 @@ class SliceDataset(Dataset):
         else:
             self.pad_fill_value = 0.0
 
-        print(f">> Created {subset} dataset with {len(self)} images...")
+        print(f">> Created {subset} dataset with {len(self)} images (context_size={context_size})...")
 
     def __len__(self):
         return len(self.files)
-
+    
     def _patient_id(self, img_path: Path) -> str:
         return img_path.stem.rsplit('_', 1)[0]
 
-    def _get_neighbour_path(self, index:int, offset:int) -> Path:
+    def _get_neighbour_path(self, index: int, offset: int) -> Path:
         center_path, _ = self.files[index]
         neighbor_index = index + offset
-
-        #padding
+ 
         if neighbor_index < 0 or neighbor_index >= len(self.files):
             return center_path
         neighbor_path, _ = self.files[neighbor_index]
@@ -122,209 +119,125 @@ class SliceDataset(Dataset):
 
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
-
-        # Load the raw image: .npy for SEGTHOR's raw HU data, .png for
-        # TOY2's legacy 0-255 data. GT is always .png, regardless of format.
-        is_npy = img_path.suffix == ".npy"
-        if is_npy:
-            img_arr = np.load(img_path)
-            img_open = torch.from_numpy(img_arr)[None, ...]  # (1, H, W) tensor -- TF.* accepts this directly
-        else:
-            img_open = Image.open(img_path)  # PIL Image, legacy TOY2 path
-
-        # if we are not in test mode, open the ground truth/mask
+ 
+        half = self.context_size // 2
+        slice_paths = [self._get_neighbour_path(index, offset)
+                       for offset in range(-half, half + 1)]
+ 
+        #load every slice in the stack as a raw, no transformations
+        opened = []
+        is_npy_list = []
+        for p in slice_paths:
+            is_npy = p.suffix == ".npy"
+            is_npy_list.append(is_npy)
+            if is_npy:
+                img_arr = np.load(p)
+                opened.append(torch.from_numpy(img_arr)[None, ...])  # (1, H, W)
+            else:
+                opened.append(Image.open(p))
+        is_npy = is_npy_list[0]
+ 
         if not self.test_mode:
             gt_open = Image.open(gt_path)
-
+ 
             augmentation = self.augmentation
-
+ 
             if (
-                augmentation in {
-                    "rotation",
-                    "translation",
-                    "scaling",
-                    "noise",
-                }
+                augmentation in {"rotation", "translation", "scaling", "noise"}
                 and random.random() >= self.augmentation_probability
             ):
                 augmentation = "none"
-
-            def wh():  # (width, height) -- PIL and Tensor expose this differently
+ 
+            def wh(img_open):
                 return (img_open.shape[-1], img_open.shape[-2]) if is_npy else (img_open.width, img_open.height)
-
+ 
+            #Decide the augmentation parameters per sample, apply
+            # them to every slice in the stack and to the GT, so
+            # the whole stack stays consistent with the label.
+            angle = 0.0
+            translate = [0, 0]
+            scale_factor = 1.0
+            do_affine = False
+ 
             if augmentation == "rotation":
-                angle = random.uniform(-10, 10)  # random angle between -10 and 10
-
-                img_open = TF.rotate(img_open,  # image to rotate
-                                     angle=angle,  # random angle
-                                     interpolation=InterpolationMode.BILINEAR,  # smooth pixel values based on surrounding pixels
-                                     fill=self.pad_fill_value)  # fill empty corners with real "air", not a flat 0
-                gt_open = TF.rotate(gt_open,  # image to rotate
-                                    angle=angle,  # random angle
-                                    interpolation=InterpolationMode.NEAREST,  # nearest for the mask: keep discrete class values
-                                    fill=0)
-
+                angle = random.uniform(-10, 10)
+                do_affine = True
+ 
             elif augmentation == "translation":
-                # Move the image by at most 5% of its width and height
-                w, h = wh()
+                w, h = wh(opened[half])
                 max_dx = int(0.05 * w)
                 max_dy = int(0.05 * h)
-
-                translate = [
-                    random.randint(-max_dx, max_dx),
-                    random.randint(-max_dy, max_dy)
-                ]
-
-                img_open = TF.affine(
-                    img_open,
-                    angle=0,
-                    translate=translate,
-                    scale=1.0,
-                    shear=[0.0, 0.0],
-                    interpolation=InterpolationMode.BILINEAR,
-                    fill=self.pad_fill_value
-                )
-
-                gt_open = TF.affine(
-                    gt_open,
-                    angle=0,
-                    translate=translate,
-                    scale=1.0,
-                    shear=[0.0, 0.0],
-                    interpolation=InterpolationMode.NEAREST,
-                    fill=0
-                )
+                translate = [random.randint(-max_dx, max_dx), random.randint(-max_dy, max_dy)]
+                do_affine = True
+ 
             elif augmentation == "scaling":
-                # scale the image by a random factor between 0.9 and 1.1
                 scale_factor = random.uniform(0.9, 1.1)
-
-                img_open = TF.affine(
-                                    img_open,
-                                    angle=0,
-                                    translate=[0, 0],
-                                    scale=scale_factor,
-                                    shear=[0.0, 0.0],
-                                    interpolation=InterpolationMode.BILINEAR,
-                                    fill=self.pad_fill_value
-                                )
-                gt_open = TF.affine(
-                                    gt_open,
-                                    angle=0,
-                                    translate=[0, 0],
-                                    scale=scale_factor,
-                                    shear=[0.0, 0.0],
-                                    interpolation=InterpolationMode.NEAREST,
-                                    fill=0
-                                )
+                do_affine = True
+ 
             elif augmentation in {"combination", "combination_no_noise"}:
                 probability = self.augmentation_probability
-
                 apply_rotation = random.random() < probability
                 apply_translation = random.random() < probability
                 apply_scaling = random.random() < probability
-
-                angle = (
-                    random.uniform(-10, 10)
-                    if apply_rotation
-                    else 0.0
-                )
-
+ 
+                angle = random.uniform(-10, 10) if apply_rotation else 0.0
+ 
                 if apply_translation:
-                    w, h = wh()
+                    w, h = wh(opened[half])
                     max_dx = int(0.05 * w)
                     max_dy = int(0.05 * h)
-                    translate = [
-                        random.randint(-max_dx, max_dx),
-                        random.randint(-max_dy, max_dy)
-                    ]
-                else:
-                    translate = [0, 0]
-
-                scale_factor = (
-                    random.uniform(0.9, 1.1)
-                    if apply_scaling
-                    else 1.0
-                )
-
-                # Only interpolate when at least one augmentation was selected.
-                # Otherwise the original image and mask remain unchanged.
-                if (
-                    apply_rotation
-                    or apply_translation
-                    or apply_scaling
-                ):
-                    img_open = TF.affine(
-                        img_open,
-                        angle=angle,
-                        translate=translate,
-                        scale=scale_factor,
-                        shear=[0.0, 0.0],
-                        interpolation=InterpolationMode.BILINEAR,
-                        fill=self.pad_fill_value
-                    )
-
-                    gt_open = TF.affine(
-                        gt_open,
-                        angle=angle,
-                        translate=translate,
-                        scale=scale_factor,
-                        shear=[0.0, 0.0],
-                        interpolation=InterpolationMode.NEAREST,
-                        fill=0
-                    )
-
+                    translate = [random.randint(-max_dx, max_dx), random.randint(-max_dy, max_dy)]
+ 
+                scale_factor = random.uniform(0.9, 1.1) if apply_scaling else 1.0
+                do_affine = apply_rotation or apply_translation or apply_scaling
+ 
             elif augmentation not in {"none", "noise"}:
                 raise ValueError(f"Unknown augmentation: {augmentation}")
+ 
+            if do_affine:
+                opened = [
+                    TF.affine(o, angle=angle, translate=translate, scale=scale_factor,
+                             shear=[0.0, 0.0], interpolation=InterpolationMode.BILINEAR,
+                             fill=self.pad_fill_value)
+                    for o in opened
+                ]
+                gt_open = TF.affine(
+                    gt_open, angle=angle, translate=translate, scale=scale_factor,
+                    shear=[0.0, 0.0], interpolation=InterpolationMode.NEAREST, fill=0
+                )
         else:
-            augmentation = self.augmentation  # test mode: no GT, but still need this defined below
-
-        # .npy: already a correctly-scaled float32 HU tensor -- skip
-        # img_transform (it calls .astype(), which only exists on NumPy
-        # arrays, not tensors). .png (TOY2): convert back to a NumPy array
-        # first, since img_transform expects one and applies the legacy
-        # /255 rescale internally.
-        if is_npy:
-            img: Tensor = img_open.float()
-        else:
-            img: Tensor = self.img_transform(np.array(img_open))
-
+            augmentation = self.augmentation
+ 
+        # Build the slice channels and stack them -- same per-slice
+        # logic as main's single-slice version repeated across the stack.
+        channels = []
+        for o, this_is_npy in zip(opened, is_npy_list):
+            if this_is_npy:
+                channels.append(o.float())
+            else:
+                channels.append(self.img_transform(np.array(o)))
+        img: Tensor = torch.cat(channels, dim=0)
+ 
         if self.subset == "train":
             apply_noise = (
                 augmentation == "noise"
-                or (
-                    augmentation == "combination"
-                    and random.random() < self.augmentation_probability
-                )
+                or (augmentation == "combination" and random.random() < self.augmentation_probability)
             )
-
             if apply_noise:
                 img = img + torch.randn_like(img) * 0.03
                 if not is_npy:
-                    # Only the legacy [0,1]-scaled TOY2 path has a meaningful
-                    # fixed range to clamp back into; HU/normalized data has
-                    # no such fixed bound.
                     img = img.clamp(0.0, 1.0)
-        half = self.context_size // 2
-        slice_paths = []
-        for offset in range (-half, half+1):
-            slice_paths.append(self._get_neighbour_path(index, offset))
-
-        channels = []
-        for p in slice_paths:
-            channels.append(torch.from_numpy(np.load(p)).float().unsqueeze(0) if p.suffix == ".npy" else self.img_transform(np.array(Image.open(p))))
-
-        img: Tensor = torch.cat(channels, dim=0)
-
+ 
         data_dict = {"images": img,
                      "stems": img_path.stem}
-
+ 
         if not self.test_mode:
             gt: Tensor = self.gt_transform(gt_open)
-
+ 
             _, W, H = img.shape
             K, _, _ = gt.shape
             assert gt.shape == (K, W, H)
-
+ 
             data_dict["gts"] = gt
-
+ 
         return data_dict
