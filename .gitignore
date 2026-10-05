@@ -3,11 +3,13 @@ data/*
 !data/*.sha256
 results/
 volumes/
+splits/
 ai4mi/
 ai4mi_venv/
 __pycache__/
 eda_output/
 
+data/
 
 projects
 .DS_Store

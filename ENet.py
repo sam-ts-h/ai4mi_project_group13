@@ -182,10 +182,12 @@ class ENet(nn.Module):
                 #                          BottleNeckDownSampling,
                 #                          BottleNeckUpSampling,
                 #                          conv_block)
-                self.channel_fusion = (nn.Conv2d(in_dim, 1, kernel_size=1) if in_dim != 1 else nn.Identity())
+                #! self.channel_fusion = (nn.Conv2d(in_dim, 1, kernel_size=1) if in_dim != 1 else nn.Identity())
                 # Initial operations
-                self.conv0 = nn.Conv2d(1, K - 1, kernel_size=3, stride=2, padding=1)
+                self.conv0 = nn.Conv2d(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
                 self.maxpool0 = nn.MaxPool2d(2, return_indices=False, ceil_mode=False)
+                # collapse the pooled raw input to one channel so the concat is always K
+                self.skip_proj = nn.Conv2d(in_dim, 1, kernel_size=1) if in_dim != 1 else nn.Identity()
 
                 # Downsampling half
                 self.bottleneck1_0 = BottleNeckDownSampling(K, K * 4, F)
@@ -228,10 +230,10 @@ class ENet(nn.Module):
                 print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}) with {kwargs}")
 
         def forward(self, input):
-                input = self.channel_fusion(input)
+                #! input = self.channel_fusion(input)
                 # Initial operations
                 conv_0 = self.conv0(input)
-                maxpool_0 = self.maxpool0(input)
+                maxpool_0 = self.skip_proj(self.maxpool0(input))
                 outputInitial = torch.cat((conv_0, maxpool_0), dim=1)
 
                 # Downsampling half

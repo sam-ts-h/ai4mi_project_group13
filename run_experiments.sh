@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 
-export PYTHONNOUSERSITE=1
-export PYTHONPATH="/local/.old/mjp104/python_env/lib/python3.12/site-packages"
+source /local/data/ipv577/projects/ai4mi_project_group13/ai4mi_venv/bin/activate
 
-SPLIT_BASE="/local/.old/mjp104/ai4mi_project_group13_splits"
-RESULTS_BASE="/local/.old/mjp104/ai4mi_project_group13_results"
+SPLIT_BASE="/local/data/ipv577/projects/ai4mi_project_group13/splits"
+RESULTS_BASE="/local/data/ipv577/projects/ai4mi_project_group13/results"
 
 SEEDS=(42 43 44)
 CONTEXT_SIZES=(1 3 5 7 9)
