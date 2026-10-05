@@ -21,6 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+import time
 
 import argparse
 import warnings
@@ -115,7 +116,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
         torch.mps.manual_seed(args.seed)
 
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
 
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
@@ -138,9 +139,13 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              augmentation_probability=args.augmentation_probability,
                              debug=args.debug,
                              context_size = args.context_size)
+    # !increased num_workers from 5 to 12; in combination with OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 1 worker is very cheap now
     train_loader = DataLoader(train_set,
                               batch_size=B,
-                              num_workers=5,
+                              num_workers=12,
+                              persistent_workers=True,
+                              prefetch_factor=4,
+                              pin_memory=True,
                               shuffle=True)
 
     val_set = SliceDataset('val',
@@ -152,7 +157,10 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            context_size = args.context_size)
     val_loader = DataLoader(val_set,
                             batch_size=B,
-                            num_workers=5,
+                            num_workers=12,
+                            persistent_workers=True,
+                            prefetch_factor=4,
+                            pin_memory=True,
                             shuffle=False)
 
     args.dest.mkdir(parents=True, exist_ok=True)
@@ -209,6 +217,7 @@ def runTraining(args):
                 j = 0
                 tq_iter = tqdm_(enumerate(loader), total=len(loader), desc=desc)
                 for i, data in tq_iter:
+                    
                     img = data['images'].to(device)
                     gt = data['gts'].to(device)
 

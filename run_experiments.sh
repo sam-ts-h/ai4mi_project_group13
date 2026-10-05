@@ -1,11 +1,18 @@
 #!/bin/bash
 
+# on the VU compute we have access to 128 kernels; every worker starts number of kernels many threads, so with 5 workers we are roughly at 600+ threads;
+# to avoid spending ressources on thread management, we limit the number of threads to 1 per worker; this is also recommended by pytorch and mkl
+# now we increase the number of workers to 12 since they are cheap; see main.py
+
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 PROJECT="/local/data/ipv577/projects/ai4mi_project_group13"
 source "$PROJECT/ai4mi_venv/bin/activate"
 cd "$PROJECT" || exit 1
 
-SPLIT_BASE="$PROJECT/ai4mi_project_group13/splits"
-RESULTS_BASE="$PROJECT/ai4mi_project_group13/results/context_size_experiment"
+SPLIT_BASE="$PROJECT/splits"
+RESULTS_BASE="$PROJECT/results/context_size_experiment"
 
 SEEDS=(42 43 44)
 CONTEXT_SIZES=(1 3 5 7 9)
@@ -32,9 +39,11 @@ for seed in "${SEEDS[@]}"; do
             echo ">>> skip  split=$seed ctx=$ctx (done)"
             continue
         fi
- 
+
+        # ! after some experiments I figures out that some asserts in utils.py increase runtime by roughly 60% within the metrics compution;
+        # ! therefore we run with flag -O to exclude all assertions
         echo "=== start split=$seed ctx=$ctx  $(date) ==="
-        python main.py \
+        python -O main.py \
             --dataset SEGTHOR \
             --mode full \
             --epochs "$EPOCHS" \
