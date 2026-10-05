@@ -30,3 +30,25 @@ data/SEGTHOR:
 	python $(CFLAGS) slice_segthor.py --source_dir data/segthor_part1 --dest_dir $@_tmp \
 		--shape 256 256 --retain 5
 	mv $@_tmp $@
+
+dataDistmap: data/SEGTHOR
+	$(info $(green)python computeDistanceMaps.py$(reset))
+	python computeDistanceMaps.py --data_dir data/SEGTHOR
+
+outputFile = results/SEGTHOR_baseline_seed42
+# ce of ceDice of ceDiceBoundary 
+lossFn = ceDice
+
+# trainData: data/SEGTHOR
+#	python main.py --dataset SEGTHOR --mode full --loss $(lossFn) --epochs 25 --dest $(outputFile) --gpu
+
+
+evalData:
+	python stitch.py --data_folder $(outputFile)/best_epoch/val --dest_folder $(outputFile)/volumes \
+		--num_classes 255 --grp_regex "(Patient_\\d\\d)_\\d\\d\\d\\d" \
+		--source_scan_pattern "data/segthor_part1/train/{id_}/GT.nii.gz"
+	python metrics.py --pred_folder $(outputFile)/volumes --gt_folder data/segthor_part1/train \
+		--dest_folder $(outputFile)/metrics
+	python plot.py --metric_file $(outputFile)/dice_val.npy --dest $(outputFile)/dice_val.png --headless
+	python plot.py --metric_file $(outputFile)/loss_val.npy --dest $(outputFile)/loss_val.png --headless
+	python plot.py --metric_file $(outputFile)/loss_tra.npy --dest $(outputFile)/loss_tra.png --headless

@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 
 # MIT License
-
 # Copyright (c) 2025 Hoel Kervadec, Caroline Magg
 
 import argparse
 import warnings
 import random
+import time
+
 from typing import Any
 from pathlib import Path
 from pprint import pprint
 from shutil import copytree, rmtree
+from functools import partial
 
 import torch
 import numpy as np
 import torch.nn.functional as F
+
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
-
-from functools import partial
 
 from dataset import SliceDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
+
 from utils import (
     Dcm,
     class2one_hot,
@@ -42,7 +44,8 @@ from losses import CrossEntropy
 
 datasets_params: dict[str, dict[str, Any]] = {}
 
-# K = number of classes
+
+# TOY2
 datasets_params["TOY2"] = {
     'K': 2,
     'net': shallowCNN,
@@ -51,7 +54,8 @@ datasets_params["TOY2"] = {
     'factor': 2
 }
 
-# Original SEGTHOR option
+
+# Original SEGTHOR
 datasets_params["SEGTHOR"] = {
     'K': 5,
     'net': ENet,
@@ -59,6 +63,7 @@ datasets_params["SEGTHOR"] = {
     'kernels': 8,
     'factor': 2
 }
+
 
 datasets_params["SEGTHOR_CLEAN"] = {
     'K': 5,
@@ -70,7 +75,7 @@ datasets_params["SEGTHOR_CLEAN"] = {
 
 
 # ============================================================
-# PREPROCESSING DATASETS FOR COMPARISON
+# PREPROCESSING DATASETS
 # ============================================================
 
 datasets_params["SEGTHOR_baseline"] = {
@@ -81,6 +86,7 @@ datasets_params["SEGTHOR_baseline"] = {
     'factor': 2
 }
 
+
 datasets_params["SEGTHOR_windowed"] = {
     'K': 5,
     'net': ENet,
@@ -89,6 +95,7 @@ datasets_params["SEGTHOR_windowed"] = {
     'factor': 2
 }
 
+
 datasets_params["SEGTHOR_soft"] = {
     'K': 5,
     'net': ENet,
@@ -96,6 +103,7 @@ datasets_params["SEGTHOR_soft"] = {
     'kernels': 8,
     'factor': 2
 }
+
 
 datasets_params["SEGTHOR_windowed_antialias"] = {
     'K': 5,
@@ -106,13 +114,69 @@ datasets_params["SEGTHOR_windowed_antialias"] = {
 }
 
 
+datasets_params["SEGTHOR_percentile"] = {
+    'K': 5,
+    'net': ENet,
+    'B': 8,
+    'kernels': 8,
+    'factor': 2
+}
+
+
+# ============================================================
+# DIFFERENT DATA SPLIT SEEDS
+# ============================================================
+
+datasets_params["SEGTHOR_baseline_seed42"] = (
+    datasets_params["SEGTHOR_baseline"].copy()
+)
+
+datasets_params["SEGTHOR_percentile_seed42"] = (
+    datasets_params["SEGTHOR_percentile"].copy()
+)
+
+datasets_params["SEGTHOR_windowed_seed42"] = (
+    datasets_params["SEGTHOR_windowed"].copy()
+)
+
+
+datasets_params["SEGTHOR_baseline_seed43"] = (
+    datasets_params["SEGTHOR_baseline"].copy()
+)
+
+datasets_params["SEGTHOR_percentile_seed43"] = (
+    datasets_params["SEGTHOR_percentile"].copy()
+)
+
+datasets_params["SEGTHOR_windowed_seed43"] = (
+    datasets_params["SEGTHOR_windowed"].copy()
+)
+
+
+datasets_params["SEGTHOR_baseline_seed44"] = (
+    datasets_params["SEGTHOR_baseline"].copy()
+)
+
+datasets_params["SEGTHOR_percentile_seed44"] = (
+    datasets_params["SEGTHOR_percentile"].copy()
+)
+
+datasets_params["SEGTHOR_windowed_seed44"] = (
+    datasets_params["SEGTHOR_windowed"].copy()
+)
+
+
 # ============================================================
 # IMAGE TRANSFORMS
 # ============================================================
 
 def img_transform(img):
+
     img = img.convert('L')
-    img = np.array(img)[np.newaxis, ...]
+
+    img = np.array(
+        img
+    )[np.newaxis, ...]
 
     # Convert PNG range 0-255 to 0-1
     img = img / 255
@@ -126,9 +190,13 @@ def img_transform(img):
 
 
 def gt_transform(K, img):
-    img = np.array(img)[...]
 
-    # Convert ground-truth PNG values back to class IDs
+    img = np.array(
+        img
+    )[...]
+
+    # Convert ground-truth PNG values
+    # back to class IDs
     img = (
         img / (255 / (K - 1))
         if K != 5
@@ -154,17 +222,31 @@ def gt_transform(K, img):
 
 def set_seed(seed: int):
 
-    random.seed(seed)
-    np.random.seed(seed)
+    random.seed(
+        seed
+    )
 
-    torch.manual_seed(seed)
+    np.random.seed(
+        seed
+    )
+
+    torch.manual_seed(
+        seed
+    )
 
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+
+        torch.cuda.manual_seed(
+            seed
+        )
+
+        torch.cuda.manual_seed_all(
+            seed
+        )
 
     # Makes GPU training more reproducible
     if torch.backends.cudnn.is_available():
+
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
@@ -204,20 +286,30 @@ def setup(args) -> tuple[
     # --------------------------------------------------------
 
     K: int = (
-        datasets_params[args.dataset]['K']
+        datasets_params[
+            args.dataset
+        ]['K']
     )
 
     kernels: int = (
-        datasets_params[args.dataset]['kernels']
+        datasets_params[
+            args.dataset
+        ]['kernels']
         if 'kernels'
-        in datasets_params[args.dataset]
+        in datasets_params[
+            args.dataset
+        ]
         else 8
     )
 
     factor: int = (
-        datasets_params[args.dataset]['factor']
+        datasets_params[
+            args.dataset
+        ]['factor']
         if 'factor'
-        in datasets_params[args.dataset]
+        in datasets_params[
+            args.dataset
+        ]
         else 2
     )
 
@@ -237,7 +329,9 @@ def setup(args) -> tuple[
 
     net.init_weights()
 
-    net.to(device)
+    net.to(
+        device
+    )
 
 
     # --------------------------------------------------------
@@ -258,7 +352,9 @@ def setup(args) -> tuple[
     # --------------------------------------------------------
 
     B: int = (
-        datasets_params[args.dataset]['B']
+        datasets_params[
+            args.dataset
+        ]['B']
     )
 
     root_dir = (
@@ -284,9 +380,12 @@ def setup(args) -> tuple[
     )
 
 
-    # Generator makes shuffle reproducible
+    # Makes training shuffle reproducible
     generator = torch.Generator()
-    generator.manual_seed(args.seed)
+
+    generator.manual_seed(
+        args.seed
+    )
 
 
     train_loader = DataLoader(
@@ -351,7 +450,16 @@ def runTraining(args):
     )
 
 
-    net, optimizer, device, train_loader, val_loader, K = setup(args)
+    (
+        net,
+        optimizer,
+        device,
+        train_loader,
+        val_loader,
+        K
+    ) = setup(
+        args
+    )
 
 
     # --------------------------------------------------------
@@ -361,20 +469,30 @@ def runTraining(args):
     if args.mode == "full":
 
         loss_fn = CrossEntropy(
-            idk=list(range(K))
+            idk=list(
+                range(K)
+            )
         )
 
     elif (
         args.mode == "partial"
-        and args.dataset.startswith("SEGTHOR")
+        and args.dataset.startswith(
+            "SEGTHOR"
+        )
     ):
 
         # Do not supervise heart (class 2)
         loss_fn = CrossEntropy(
-            idk=[0, 1, 3, 4]
+            idk=[
+                0,
+                1,
+                3,
+                4
+            ]
         )
 
     else:
+
         raise ValueError(
             args.mode,
             args.dataset
@@ -388,14 +506,18 @@ def runTraining(args):
     log_loss_tra: Tensor = torch.zeros(
         (
             args.epochs,
-            len(train_loader)
+            len(
+                train_loader
+            )
         )
     )
 
     log_dice_tra: Tensor = torch.zeros(
         (
             args.epochs,
-            len(train_loader.dataset),
+            len(
+                train_loader.dataset
+            ),
             K
         )
     )
@@ -403,14 +525,18 @@ def runTraining(args):
     log_loss_val: Tensor = torch.zeros(
         (
             args.epochs,
-            len(val_loader)
+            len(
+                val_loader
+            )
         )
     )
 
     log_dice_val: Tensor = torch.zeros(
         (
             args.epochs,
-            len(val_loader.dataset),
+            len(
+                val_loader.dataset
+            ),
             K
         )
     )
@@ -419,21 +545,39 @@ def runTraining(args):
     best_dice: float = 0
 
 
+    # Total training timer
+    training_start = time.perf_counter()
+
+
     # ========================================================
     # EPOCH LOOP
     # ========================================================
 
-    for e in range(args.epochs):
+    for e in range(
+        args.epochs
+    ):
 
-        for m in ['train', 'val']:
+        # Start epoch timer
+        epoch_start = time.perf_counter()
+
+
+        for m in [
+            'train',
+            'val'
+        ]:
 
             match m:
+
+                # =================================================
+                # TRAIN
+                # =================================================
 
                 case 'train':
 
                     net.train()
 
                     opt = optimizer
+
                     cm = Dcm
 
                     desc = (
@@ -441,17 +585,29 @@ def runTraining(args):
                         f"({e:4d})"
                     )
 
-                    loader = train_loader
+                    loader = (
+                        train_loader
+                    )
 
-                    log_loss = log_loss_tra
-                    log_dice = log_dice_tra
+                    log_loss = (
+                        log_loss_tra
+                    )
 
+                    log_dice = (
+                        log_dice_tra
+                    )
+
+
+                # =================================================
+                # VALIDATION
+                # =================================================
 
                 case 'val':
 
                     net.eval()
 
                     opt = None
+
                     cm = torch.no_grad
 
                     desc = (
@@ -459,10 +615,17 @@ def runTraining(args):
                         f"({e:4d})"
                     )
 
-                    loader = val_loader
+                    loader = (
+                        val_loader
+                    )
 
-                    log_loss = log_loss_val
-                    log_dice = log_dice_val
+                    log_loss = (
+                        log_loss_val
+                    )
+
+                    log_dice = (
+                        log_dice_val
+                    )
 
 
             # ------------------------------------------------
@@ -474,8 +637,12 @@ def runTraining(args):
                 j = 0
 
                 tq_iter = tqdm_(
-                    enumerate(loader),
-                    total=len(loader),
+                    enumerate(
+                        loader
+                    ),
+                    total=len(
+                        loader
+                    ),
                     desc=desc
                 )
 
@@ -484,14 +651,19 @@ def runTraining(args):
 
                     img = data[
                         'images'
-                    ].to(device)
+                    ].to(
+                        device
+                    )
 
                     gt = data[
                         'gts'
-                    ].to(device)
+                    ].to(
+                        device
+                    )
 
 
                     if opt:
+
                         opt.zero_grad()
 
 
@@ -504,14 +676,18 @@ def runTraining(args):
                         and img.max() <= 1
                     )
 
-                    B, _, W, H = img.shape
+                    B, _, W, H = (
+                        img.shape
+                    )
 
 
                     # ----------------------------------------
                     # Forward pass
                     # ----------------------------------------
 
-                    pred_logits = net(img)
+                    pred_logits = net(
+                        img
+                    )
 
                     pred_probs = F.softmax(
                         pred_logits,
@@ -595,7 +771,9 @@ def runTraining(args):
                                 predicted_class
                                 * mult,
 
-                                data['stems'],
+                                data[
+                                    'stems'
+                                ],
 
                                 args.dest
                                 / f"iter{e:03d}"
@@ -647,22 +825,26 @@ def runTraining(args):
         # ====================================================
 
         np.save(
-            args.dest / "loss_tra.npy",
+            args.dest
+            / "loss_tra.npy",
             log_loss_tra
         )
 
         np.save(
-            args.dest / "dice_tra.npy",
+            args.dest
+            / "dice_tra.npy",
             log_dice_tra
         )
 
         np.save(
-            args.dest / "loss_val.npy",
+            args.dest
+            / "loss_val.npy",
             log_loss_val
         )
 
         np.save(
-            args.dest / "dice_val.npy",
+            args.dest
+            / "dice_val.npy",
             log_dice_val
         )
 
@@ -692,40 +874,61 @@ def runTraining(args):
                 f"->{current_dice:05.3f} DSC"
             )
 
-            print(message)
+            print(
+                message
+            )
 
-            best_dice = current_dice
+            best_dice = (
+                current_dice
+            )
 
 
-            # Save information about best epoch
+            # --------------------------------------------
+            # Save best epoch information
+            # --------------------------------------------
+
             with open(
                 args.dest
                 / "best_epoch.txt",
                 'w'
             ) as f:
 
-                f.write(message)
+                f.write(
+                    message
+                )
 
 
+            # --------------------------------------------
             # Save predictions from best epoch
+            # --------------------------------------------
+
             best_folder = (
                 args.dest
                 / "best_epoch"
             )
 
+
             if best_folder.exists():
-                rmtree(best_folder)
+
+                rmtree(
+                    best_folder
+                )
 
 
             copytree(
                 args.dest
                 / f"iter{e:03d}",
 
-                Path(best_folder)
+                Path(
+                    best_folder
+                )
             )
 
 
+            # --------------------------------------------
             # Save model
+            # --------------------------------------------
+
             torch.save(
                 net,
                 args.dest
@@ -737,6 +940,88 @@ def runTraining(args):
                 args.dest
                 / "bestweights.pt"
             )
+
+
+        # ====================================================
+        # EPOCH TIME
+        # ====================================================
+
+        epoch_time = (
+            time.perf_counter()
+            - epoch_start
+        )
+
+        print(
+            f">>> Epoch {e + 1}/{args.epochs} "
+            f"finished in "
+            f"{epoch_time / 60:.2f} min "
+            f"({epoch_time:.1f} s)"
+        )
+
+
+        # ====================================================
+        # ESTIMATED TIME REMAINING
+        # ====================================================
+
+        elapsed_training = (
+            time.perf_counter()
+            - training_start
+        )
+
+        average_epoch_time = (
+            elapsed_training
+            / (e + 1)
+        )
+
+        remaining_epochs = (
+            args.epochs
+            - (e + 1)
+        )
+
+        estimated_remaining = (
+            average_epoch_time
+            * remaining_epochs
+        )
+
+        if remaining_epochs > 0:
+
+            print(
+                f">>> Estimated remaining time: "
+                f"{estimated_remaining / 60:.1f} min"
+            )
+
+
+    # ========================================================
+    # TOTAL TRAINING TIME
+    # ========================================================
+
+    total_training_time = (
+        time.perf_counter()
+        - training_start
+    )
+
+    print()
+    print(
+        "=" * 60
+    )
+
+    print(
+        f">>> Training finished"
+    )
+
+    print(
+        f">>> Total time: "
+        f"{total_training_time / 60:.2f} minutes"
+    )
+
+    print(
+        f">>> Best validation Dice: "
+        f"{best_dice:.4f}"
+    )
+
+    print(
+        "=" * 60
+    )
 
 
 # ============================================================
@@ -815,17 +1100,23 @@ def main():
     args = parser.parse_args()
 
 
-    pprint(args)
+    pprint(
+        args
+    )
 
 
-    # Important:
-    # use exactly the same seed
+    # Use exactly the same training seed
     # for every preprocessing experiment
-    set_seed(args.seed)
+    set_seed(
+        args.seed
+    )
 
 
-    runTraining(args)
+    runTraining(
+        args
+    )
 
 
 if __name__ == '__main__':
+
     main()
