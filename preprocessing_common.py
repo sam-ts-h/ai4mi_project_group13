@@ -22,8 +22,14 @@ TARGET_SPACING_MM = 1.0
 # Derived from the EDA's "body, largest 2D connected component per slice" bounding-box measurement (335.0mm x 514.2mm)
 # This is already generous since it covers the full body, not just organs). 
 # Rounded up to a multiple of 32 for ENet's 8x downsampling, since this using that architecture now, can change later.
-GRID_ROWS = 544
-GRID_COLS = 352
+#GRID_ROWS = 544
+#GRID_COLS = 352
+# We decided to change the grid that every slice is padded/cropped to after resampling back to the fixed 512x512.
+# The slice specific body centered bounding box works on slice and not patient level and therefore can change orientations slightly within one patient;
+# this introduces noise to the 2.5D model and might explain the so far bad performance
+# we need to resize everything to one shape so the batch stacking in the DataLoader works
+GRID_ROWS = 512
+GRID_COLS = 512
  
 # Empriical body-mask heuristic
 BODY_HU_THRESHOLD = -300

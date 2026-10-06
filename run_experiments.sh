@@ -12,7 +12,7 @@ source "$PROJECT/ai4mi_venv/bin/activate"
 cd "$PROJECT" || exit 1
 
 SPLIT_BASE="$PROJECT/splits"
-RESULTS_BASE="$PROJECT/results/context_size_experiment"
+RESULTS_BASE="$PROJECT/results/context_512crop_no_aug"
 
 SEEDS=(42 43 44)
 CONTEXT_SIZES=(1 3 5 7 9)
@@ -22,7 +22,7 @@ EPOCHS=25
 mkdir -p "$RESULTS_BASE"
 
 for seed in "${SEEDS[@]}"; do
-    DATA_DIR="$SPLIT_BASE/SEGTHOR_full_split${seed}"
+    DATA_DIR="$SPLIT_BASE/SEGTHOR_512_split${seed}"
     
     if [ ! -d "$DATA_DIR" ]; then
         echo "!!! missing $DATA_DIR -- slice it first, skipping split $seed"
@@ -51,7 +51,8 @@ for seed in "${SEEDS[@]}"; do
             --data_dir "$DATA_DIR" \
             --context_size "$ctx" \
             --seed "$seed" \
-            --gpu
+            --gpu \
+            --augmentation none
 
         # here we write to the done.txt that current configuration was ran successfully
         if [ $? -eq 0 ]; then

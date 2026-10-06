@@ -40,7 +40,7 @@ from skimage.transform import resize
 from utils import map_, tqdm_
 from preprocessing_common import (GRID_ROWS, GRID_COLS,
                                   resample_image_slice, resample_mask_slice,
-                                  body_mask_2d, body_centroid, crop_or_pad_to_grid)
+                                  crop_or_pad_to_grid)
 
 # Raw HU floor when clipping is OFF for a given ablation run: not a design choice, it's just the dataset's own guaranteed floor.
 # Used only to define what "air" means for the padding fill value when --clip is not passed.
@@ -131,7 +131,7 @@ def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: in
     return float(low), float(high)
 
 def compute_global_stats(training_ids: list[str], source_path: Path,
-                         clip_range: tuple[float, float], use_resample: bool, shape: tuple[int, int]):
+                         clip_range: tuple[float, float], use_resample: bool, use_crop: bool, air_value: float, shape: tuple[int, int]):
     """
     Two-pass normalization. pass 1: compute a single dataset-wide mean and std, over every pixel of every clipped, resampled 
     training slice (never validation or test, since computing stats from data you'll later evaluate on is data leakage). 
@@ -152,6 +152,13 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
             else:
                 resampled = resize(ct[:, :, idz], shape, order=1, mode="constant",
                                    preserve_range=True, anti_aliasing=False).astype(np.float32)
+            
+            # mirror pass the second runs crop so mean and std get calculated correctly (over the exact same pixels)
+            if use_crop:
+                center = (resampled.shape[0] / 2, resampled.shape[1] / 2)
+                resampled = crop_or_pad_to_grid(resampled, GRID_ROWS, GRID_COLS,
+                                                center, fill_value=air_value)
+
             # Accumulate in float64: total_count will run into the hundreds of millions of pixels across the full training set, 
             # and a float32 running sum could start losing real precision.
             total_sum += resampled.sum(dtype=np.float64)
@@ -165,8 +172,9 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
     return float(mean), std
 
 
-def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, 
+def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, use_crop: bool, 
                   use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
+
     ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = ct.shape[2]
 
@@ -194,16 +202,10 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             
         assert img_slice.shape == gt_slice.shape
 
-        if use_resample:
-            # Crop/pad is only meaningful after resampling, since original fixed resize already produces same grid size
-            # Body detection happens here, on the resampled but not yet normalized HU slice, since  body_mask_2d's thresholds are 
-            # in real HU units, which are meaningless once z-scored. 
-            mask = body_mask_2d(img_slice)
-            center = body_centroid(mask)
-            if center is None:
-                # No tissue above threshold at all in this slice (e.g. a mostly empty slice right at the very top/bottom of the scan),
-                # fall back to the slice's own geometric center.
-                center = (img_slice.shape[0] / 2, img_slice.shape[1] / 2)
+        # Geometric center: identical for every slice of every patient, so the crop
+        # window never shifts between neighbouring slices.
+        # ! changed
+        center = (img_slice.shape[0] / 2, img_slice.shape[1] / 2)
 
         # Normalize after resampling, using taining mean/std
         # The same fixed mean/std is applied identically whether this call is processing a train or val patient,
@@ -222,7 +224,7 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         # Crop/pad both the image and GT to the same fixed grid, centered on the same body centroid. 
         # Image padding uses pad_fill_value (the normalized-space equivalent of real air HU, precomputed once in main()).
         # GT padding uses 0 (background class) since padded regions have no real anatomy.
-        if use_resample:
+        if use_crop:
             img_slice = crop_or_pad_to_grid(img_slice, GRID_ROWS, GRID_COLS, center, fill_value=pad_fill_value)
             gt_slice = crop_or_pad_to_grid(gt_slice, GRID_ROWS, GRID_COLS, center, fill_value=0)
             assert img_slice.shape == (GRID_ROWS, GRID_COLS)
@@ -284,10 +286,14 @@ def main(args: argparse.Namespace):
     else:
         clip_range = None
 
+    air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
+
     if args.normalize:
         # Pass one over data: Compute dataset normalization stats from training data only (avoid data leakage)
         print(">> Computing normalization statistics over the training set...")
-        mean, std = compute_global_stats(training_ids, src_path, clip_range, args.resample, tuple(args.shape))
+        mean, std = compute_global_stats(training_ids, src_path, clip_range,
+                                         args.resample, args.crop, air_value,
+                                         tuple(args.shape))
         print(f">> mean={mean:.3f}, std={std:.3f}")
     else:
         mean, std = None, None
@@ -297,7 +303,7 @@ def main(args: argparse.Namespace):
     # slice_patient(), so padding represents actual air in the same normalized space the network sees, rather than an arbitrary value.
     # Air floor is CLIP_MIN if clipping is on for this run, otherwise the dataset's raw HU floor (RAW_AIR_FLOOR). 
     # If normalizing, that air value also needs to go through the same z-score transform real pixels get; if not, it's used exactly as-is.
-    air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
+    
     pad_fill_value = (air_value - mean) / std if args.normalize else air_value
 
     # Save stats for future efficiency
@@ -320,6 +326,7 @@ def main(args: argparse.Namespace):
                                  shape=tuple(args.shape),
                                  clip_range=clip_range,
                                  use_resample=args.resample,
+                                 use_crop=args.crop,
                                  use_normalize=args.normalize,
                                  mean=mean,
                                  std=std,
@@ -359,6 +366,11 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--resample', action='store_true',
                         help="Resample to a common in-plane spacing, with anti-aliasing, followed by body-centroid crop/pad to a fixed grid."
                              "If not set, falls back to the original fixed-shape stretch resize.")
+    # ! newly added
+    parser.add_argument('--crop', action='store_true', default=False,
+                        help="body-centroid crop/pad to a fixed grid."
+                             "If not set, falls back to no cropping.")
+    # !
     parser.add_argument('--normalize', action='store_true',
                         help="Z-score normalize using training set mean/std.")
     args = parser.parse_args()

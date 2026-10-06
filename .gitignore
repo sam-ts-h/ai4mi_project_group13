@@ -13,3 +13,7 @@ data/
 
 projects
 .DS_Store
+
+experiment_log_2.txt
+experiment_log.txt
+experiment_log_16kernels.txt
