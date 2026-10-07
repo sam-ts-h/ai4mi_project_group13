@@ -40,7 +40,7 @@ from skimage.transform import resize
 from utils import map_, tqdm_
 from preprocessing_common import (GRID_ROWS, GRID_COLS,
                                   resample_image_slice, resample_mask_slice,
-                                  crop_or_pad_to_grid)
+                                  crop_or_pad_to_grid, resample_volume_z, TARGET_Z_SPACING_MM)
 
 # Raw HU floor when clipping is OFF for a given ablation run: not a design choice, it's just the dataset's own guaranteed floor.
 # Used only to define what "air" means for the padding fill value when --clip is not passed.
@@ -83,7 +83,7 @@ def sanity_gt(gt, ct) -> bool:
     return True
 
 
-def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
+def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False, use_resample_z: bool = False):
     """
     Load one patient's raw CT (and GT, unless test_mode). Factored out clipping since both slice_patient() and 
     compute_global_stats() need to load and clip the same raw data.
@@ -107,9 +107,14 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
+    if use_resample_z:
+        ct = resample_volume_z(ct, dz, order=1)
+        gt = resample_volume_z(gt, dz, order=0)
+        dz = TARGET_Z_SPACING_MM
+
     return ct, gt, (dx, dy, dz)
 
-def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: int = 20_000) -> tuple[float, float]:
+def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: int = 20_000, use_resample_z: bool = False) -> tuple[float, float]:
     """
     Clip range = 0.5 / 99.5 percentiles of the foreground (organ-labeled) HU values, computed over the training patients
     only, so validation data never influences the preprocessing (avoid data leakage). Same calculation as analyze_intensity() 
@@ -119,7 +124,7 @@ def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: in
     rng = np.random.default_rng(0)
     samples = []
     for id_ in tqdm_(training_ids, desc="Computing clip range"):
-        ct, gt, _ = load_patient_ct(id_, source_path, test_mode=False)
+        ct, gt, _ = load_patient_ct(id_, source_path, test_mode=False, use_resample_z=use_resample_z)
         for k in np.unique(gt):
             if k == 0:  # background is not foreground
                 continue
@@ -131,7 +136,7 @@ def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: in
     return float(low), float(high)
 
 def compute_global_stats(training_ids: list[str], source_path: Path,
-                         clip_range: tuple[float, float], use_resample: bool, use_crop: bool, air_value: float, shape: tuple[int, int]):
+                         clip_range: tuple[float, float], use_resample: bool, use_crop: bool, air_value: float, shape: tuple[int, int], use_resample_z: bool = False):
     """
     Two-pass normalization. pass 1: compute a single dataset-wide mean and std, over every pixel of every clipped, resampled 
     training slice (never validation or test, since computing stats from data you'll later evaluate on is data leakage). 
@@ -143,7 +148,7 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
     total_count = 0
 
     for id_ in tqdm_(training_ids, desc="Computing normalization stats (pass 1/2)"):
-        ct, _, (dx, dy, _) = load_patient_ct(id_, source_path, test_mode=False)
+        ct, _, (dx, dy, _) = load_patient_ct(id_, source_path, test_mode=False, use_resample_z=use_resample_z)
         ct = clip_ct(ct, *clip_range) if clip_range else ct.astype(np.float32)
         z = ct.shape[2]
         for idz in range(z):
@@ -173,9 +178,9 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, use_crop: bool, 
-                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
+                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False, use_resample_z: bool = False):
 
-    ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
+    ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode, use_resample_z=use_resample_z)
     z = ct.shape[2]
 
     # Do the percentile clipping if needed.
@@ -331,7 +336,8 @@ def main(args: argparse.Namespace):
                                  mean=mean,
                                  std=std,
                                  pad_fill_value=pad_fill_value,
-                                 test_mode=mode == 'test')
+                                 test_mode=mode == 'test',
+                                 use_resample_z = args.resample_z)
         resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
         match args.process:
@@ -367,6 +373,9 @@ def get_args() -> argparse.Namespace:
                         help="Resample to a common in-plane spacing, with anti-aliasing, followed by body-centroid crop/pad to a fixed grid."
                              "If not set, falls back to the original fixed-shape stretch resize.")
     # ! newly added
+    parser.add_argument('--resample_z', action='store_true',
+                    help="resample to common z-spacing (slice distance), matching the in-plane resampling. Necessary for the 2.5d" )
+    #!
     parser.add_argument('--crop', action='store_true', default=False,
                         help="body-centroid crop/pad to a fixed grid."
                              "If not set, falls back to no cropping.")

@@ -14,9 +14,8 @@ from skimage.transform import resize
 CLIP_MIN = -996.0,
 CLIP_MAX = 254.0
 
-# Target in-plane spacing (mm/voxel) everything gets resampled to. dz is deliberately not resampled since this pipeline still
-# treats every slice as an independent 2D training sample, so z spacing never enters the data the network sees.
 TARGET_SPACING_MM = 1.0
+TARGET_Z_SPACING_MM = 2.5 # To ensure dataset doesn't grow too much
 
 # Final fixed grid size every preprocessed slice is padded/cropped to, so batches can be stacked. 
 # Derived from the EDA's "body, largest 2D connected component per slice" bounding-box measurement (335.0mm x 514.2mm)
@@ -142,4 +141,19 @@ def resample_mask_slice(slice2d: np.ndarray, orig_spacing_xy: tuple[float, float
     resampled = resize(slice2d, new_shape, order=0, mode="constant",
                        preserve_range=True, anti_aliasing=False)
     return resampled.astype(slice2d.dtype)
+
+
+def resample_volume_z(volume: np.ndarray, orig_dz: float,
+                      target_z_spacing_mm: float = TARGET_Z_SPACING_MM,
+                      order: int = 1) -> np.ndarray:
+    """
+    Resample a 3D volume (rows, cols, z) along the z-axis only, so every
+    patient ends up with the same distance between slices. 
+    order=1 (linear) for CT, order=0 (nearest) for GT, same reasoning as
+    the in-plane resampling: masks must never get blended class values.
+    """
+    zoom_factor = orig_dz / target_z_spacing_mm
+    resampled = ndimage.zoom(volume, zoom=(1.0, 1.0, zoom_factor), order=order,
+                             mode="nearest" if order == 0 else "constant")
+    return resampled.astype(volume.dtype)
  

@@ -1,15 +1,3 @@
-"""Plot SEGTHOR context-size (2.5D) results across three split/training seed pairs.
-
-Place this script in the ai4mi_project root and click VS Code's Run button.
-By default, it reads results/context_size_experiment/split*_train* and writes
-results/context_size_experiment/plots/overview. --results and --output override these.
-
-Expected folders below --results: split42_train0, split43_train1,
-split44_train2, each containing C01_... through C05_... experiment folders
-(one per context_size: 1, 3, 5, 7, 9). The script reads only the four
-*_tra.npy/*_val.npy metric histories.
-"""
-
 from __future__ import annotations
 
 import argparse
