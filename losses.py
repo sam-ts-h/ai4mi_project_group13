@@ -87,6 +87,36 @@ class DiceLoss():
         return 1 - dice.mean()
 
 
+class TverskyLoss():
+    def __init__(self, **kwargs):
+        self.idk = kwargs['idk']
+        # alpha weighs fp beta weighs fn thuss alpha = beta = 0.5 is dice
+        self.alpha = kwargs.get('alpha', 0.5)
+        self.beta = kwargs.get('beta', 0.5)
+        # gamma > 1 makes it focal the worst organ gets taking into account
+        self.gamma = kwargs.get('gamma', 1)
+
+    def __call__(self, predSoftmax, target):
+        assert predSoftmax.shape == target.shape
+        assert simplex(predSoftmax)
+        assert sset(target, [0, 1])
+
+        pred = predSoftmax[:, self.idk, ...]
+        mask = target[:, self.idk, ...].float()
+        
+        #axes to sum away (batch,w,h )keeps axis 1 so we get one number per class
+        sumDims = (0, 2, 3)
+
+        tp = (pred * mask).sum(dim=sumDims)
+        fp = (pred * (1 - mask)).sum(dim=sumDims)
+        fn = ((1 - pred) * mask).sum(dim=sumDims)
+
+        tversky = (tp + SMOOTH) / (tp + self.alpha * fp + self.beta * fn + SMOOTH)
+
+        #power per organ before the mean for focal effect
+        return ((1 - tversky) ** self.gamma).mean()
+
+
 class BoundaryLoss():
     def __init__(self, **kwargs):
         self.idk = kwargs['idk']

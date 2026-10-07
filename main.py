@@ -51,7 +51,7 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy,DiceLoss,BoundaryLoss,CombinedLoss)
+from losses import (CrossEntropy,DiceLoss,TverskyLoss,BoundaryLoss,CombinedLoss)
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -207,7 +207,15 @@ def runTraining(args):
             f.write(f"share {classShare.tolist()}\nweights {ceWeights}\n")
 
     ce = CrossEntropy(idk=ceIdk, weights=ceWeights)
-    dice = DiceLoss(idk=foregroundIdk) if args.loss in ['ceDice', 'ceDiceBoundary', 'ceWDice'] else None
+    if args.loss in ['ceDice', 'ceDiceBoundary', 'ceWDice']:
+        dice = DiceLoss(idk=foregroundIdk)
+    elif args.loss == 'ceFocalDice':
+        dice = TverskyLoss(idk=foregroundIdk, alpha=0.5, beta=0.5, gamma=2)
+    elif args.loss == 'ceFocalTversky':
+        # mild push on fn (0.4fp,0.6fn)
+        dice = TverskyLoss(idk=foregroundIdk, alpha=0.4, beta=0.6, gamma=2)
+    else:
+        dice = None
     boundary = BoundaryLoss(idk=foregroundIdk) if args.loss == 'ceDiceBoundary' else None
     loss_fn = CombinedLoss(ce, dice, boundary)
     # Notice one has the length of the _loader_, and the other one of the _dataset_
@@ -349,7 +357,7 @@ def main():
                              "SEGTHOR_clip). Config (K, network, batch size) still comes from "
                              "--dataset, e.g. --dataset SEGTHOR --data_dir SEGTHOR_clip.")
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice'])
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice', 'ceFocalDice', 'ceFocalTversky'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
