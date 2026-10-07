@@ -143,17 +143,71 @@ def resample_mask_slice(slice2d: np.ndarray, orig_spacing_xy: tuple[float, float
     return resampled.astype(slice2d.dtype)
 
 
-def resample_volume_z(volume: np.ndarray, orig_dz: float,
-                      target_z_spacing_mm: float = TARGET_Z_SPACING_MM,
-                      order: int = 1) -> np.ndarray:
+def resample_volume_z(
+    volume: np.ndarray,
+    orig_dz: float,
+    target_z_spacing_mm: float = TARGET_Z_SPACING_MM,
+    order: int = 1,
+) -> np.ndarray:
     """
-    Resample a 3D volume (rows, cols, z) along the z-axis only, so every
-    patient ends up with the same distance between slices. 
-    order=1 (linear) for CT, order=0 (nearest) for GT, same reasoning as
-    the in-plane resampling: masks must never get blended class values.
+    Resample only the z-axis to an explicitly defined target spacing.
+    The new z coordinates are defined in physical space.
     """
-    zoom_factor = orig_dz / target_z_spacing_mm
-    resampled = ndimage.zoom(volume, zoom=(1.0, 1.0, zoom_factor), order=order,
-                             mode="nearest" if order == 0 else "constant")
-    return resampled.astype(volume.dtype)
+    if orig_dz <= 0:
+        raise ValueError(f"Invalid original z-spacing: {orig_dz}")
+
+    if target_z_spacing_mm <= 0:
+        raise ValueError(
+            f"Invalid target z-spacing: {target_z_spacing_mm}"
+        )
+
+    if volume.ndim != 3:
+        raise ValueError(
+            f"Expected a 3D volume, got shape {volume.shape}"
+        )
+
+    old_z = volume.shape[2]
+
+    if old_z < 2:
+        return volume.copy()
+
+    # Physical extent between the first and last voxel centers.
+    physical_extent = (old_z - 1) * orig_dz
+
+    # Number of new voxel centers needed for approximately the
+    # same physical extent.
+    new_z = int(round(physical_extent / target_z_spacing_mm)) + 1
+    new_z = max(new_z, 1)
+
+    # Exact target positions in physical z-space.
+    new_positions_mm = (
+        np.arange(new_z, dtype=np.float64) * target_z_spacing_mm
+    )
+
+    # Convert physical positions back to coordinates of the original
+    # volume. The original voxel centers are 0, 1, 2, ..., old_z-1.
+    source_positions = new_positions_mm / orig_dz
+
+    # ndimage.map_coordinates expects coordinates per axis.
+    # x/y are sampled at their original integer coordinates.
+    x_coords = np.arange(volume.shape[0], dtype=np.float64)
+    y_coords = np.arange(volume.shape[1], dtype=np.float64)
+
+    xx, yy, zz = np.meshgrid(
+        x_coords,
+        y_coords,
+        source_positions,
+        indexing="ij",
+    )
+
+    coordinates = np.array([xx, yy, zz])
+
+    resampled = ndimage.map_coordinates(
+        volume,
+        coordinates,
+        order=order,
+        mode="nearest",
+    )
+
+    return resampled.astype(volume.dtype, copy=False)
  

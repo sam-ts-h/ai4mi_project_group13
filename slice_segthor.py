@@ -108,9 +108,21 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False, use_re
         gt = np.zeros_like(ct, dtype=np.uint8)
 
     if use_resample_z:
-        ct = resample_volume_z(ct, dz, order=1)
-        gt = resample_volume_z(gt, dz, order=0)
-        dz = TARGET_Z_SPACING_MM
+        ct = resample_volume_z(
+            ct,
+            orig_dz=dz,
+            target_z_spacing_mm=TARGET_Z_SPACING_MM,
+            order=1,
+        )
+
+        gt = resample_volume_z(
+            gt,
+            orig_dz=dz,
+            target_z_spacing_mm=TARGET_Z_SPACING_MM,
+            order=0,
+        )
+
+    dz = TARGET_Z_SPACING_MM
 
     return ct, gt, (dx, dy, dz)
 
@@ -286,7 +298,7 @@ def main(args: argparse.Namespace):
     # Clip range from the training patients only (avoid data leakage)
     if args.clip:
         print(">> Computing the clip range over the training set...")
-        clip_range = compute_clip_range(training_ids, src_path )
+        clip_range = compute_clip_range(training_ids, src_path,use_resample_z=args.resample_z )
         print(f">> clip range = [{clip_range[0]:.1f}, {clip_range[1]:.1f}]")
     else:
         clip_range = None
@@ -298,7 +310,7 @@ def main(args: argparse.Namespace):
         print(">> Computing normalization statistics over the training set...")
         mean, std = compute_global_stats(training_ids, src_path, clip_range,
                                          args.resample, args.crop, air_value,
-                                         tuple(args.shape))
+                                         tuple(args.shape), use_resample_z=args.resample_z)
         print(f">> mean={mean:.3f}, std={std:.3f}")
     else:
         mean, std = None, None

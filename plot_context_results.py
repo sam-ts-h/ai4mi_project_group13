@@ -16,11 +16,8 @@ SPLITS = (
 )
 
 EXPERIMENTS = {
-    "context1": "Baseline",
-    "context3": "Context 3",
-    "context5": "Context 5",
-    "context7": "Context 7",
-    "context9": "Context 9",
+    "C01_context1": "Baseline",
+    "C02_context5": "Context 5",
 }
 ORGANS = ("Esophagus", "Heart", "Trachea", "Aorta")
 ORDER = list(EXPERIMENTS.values())
