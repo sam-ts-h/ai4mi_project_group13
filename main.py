@@ -21,7 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+from PIL import Image
 import argparse
 import warnings
 import random
@@ -38,7 +38,7 @@ from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from functools import partial 
+from functools import partial
 
 from dataset import SliceDataset
 from ShallowNet import shallowCNN
@@ -189,8 +189,25 @@ def runTraining(args):
     # background not handy for dice and dist metric so we dont look at it...
     foregroundIdk = list(range(1, K))
 
-    ce = CrossEntropy(idk=ceIdk)
-    dice = DiceLoss(idk=foregroundIdk) if args.loss in ['ceDice', 'ceDiceBoundary'] else None
+    ceWeights = None
+    if args.loss == 'ceWDice':
+        #1/sqrt of the pixel share per class
+        gtDir = Path("data") / (args.data_dir if args.data_dir else args.dataset) / "train" / "gt"
+        classCounts = np.zeros(K)
+        for gtPath in sorted(gtDir.glob("*.png")):
+            #copy so same as in gt_transform
+            gt = np.array(Image.open(gtPath)) // 63
+            for k in range(K):
+                classCounts[k] += (gt == k).sum()
+        classShare = classCounts / classCounts.sum()
+        ceWeights = (1 / np.sqrt(classShare)).tolist()
+        print(f"!!!!CE class weights: {[round(w, 2) for w in ceWeights]}")
+        with open(args.dest / "ceWeights.txt", 'w') as f:
+            #just for pp else maube remove?
+            f.write(f"share {classShare.tolist()}\nweights {ceWeights}\n")
+
+    ce = CrossEntropy(idk=ceIdk, weights=ceWeights)
+    dice = DiceLoss(idk=foregroundIdk) if args.loss in ['ceDice', 'ceDiceBoundary', 'ceWDice'] else None
     boundary = BoundaryLoss(idk=foregroundIdk) if args.loss == 'ceDiceBoundary' else None
     loss_fn = CombinedLoss(ce, dice, boundary)
     # Notice one has the length of the _loader_, and the other one of the _dataset_
@@ -332,7 +349,7 @@ def main():
                              "SEGTHOR_clip). Config (K, network, batch size) still comes from "
                              "--dataset, e.g. --dataset SEGTHOR --data_dir SEGTHOR_clip.")
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary'])
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
