@@ -8,10 +8,10 @@ from pathlib import Path
 # finished runs are skipped, and an unfinished run starts over.
 
 SEEDS = [(42, 0), (43, 1), (44, 2)]
-LOSSES = ['ce', 'ceDice', 'ceDiceBoundary']
+LOSSES = ['ceWDice', 'ceFocalDice', 'ceFocalTversky']
 EPOCHS = 50
-# each slicing worker holds the 3D distance maps of a patient (a few GB)dont go too high
-PROCESSES = 4
+# no --distmap anymoreso workers are light so more than 4 (also vu compute server seems to hold its own well)
+PROCESSES = 8
 
 sourceDir = Path("data/segthor_train_full")
 experimentsDir = Path("experiments")
@@ -38,7 +38,8 @@ for splitSeed, trainSeed in SEEDS:
         subprocess.run([sys.executable, "slice_segthor.py",
                         "--source_dir", str(sourceDir), "--dest_dir", str(dataDir),
                         "--retains", "10", "--fold", "0", "--seed", str(splitSeed),
-                        "--clip", "--resample", "--normalize", "--distmap",
+                        #add distmap hier for boundary
+                        "--clip", "--resample", "--normalize",
                         "-p", str(PROCESSES)], check=True)
         (dataDir / "sliced.txt").touch()
 
