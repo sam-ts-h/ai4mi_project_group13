@@ -129,6 +129,25 @@ def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: in
     low, high = np.percentile(np.concatenate(samples), [0.5, 99.5])
     return float(low), float(high)
 
+def compute_window_range(training_ids: list[str], source_path: Path, class_id: int,
+                         low_pct: float, high_pct: float) -> tuple[float, float]:
+    """
+    Cutoffs of the soft-tissue window (second input channel): the low/high percentile of the raw HU values inside the 
+    ground-truth label class_id (1 = esophagus), pooled over the training patients only, so validation data never influences 
+    them (avoid data leakage). Uses every labeled voxel (no subsampling), so the result is exact and deterministic. 
+    analyze_soft_tissue_window.py shows the evidence for which percentiles to pick.
+    """
+    values = []
+    for id_ in tqdm_(training_ids, desc="Computing window range"):
+        ct, gt, _ = load_patient_ct(id_, source_path, test_mode=False)
+        values.append(ct[gt == class_id].astype(np.float32))
+    values = np.concatenate(values)
+    assert values.size > 0, f"no voxels labeled {class_id} in the training patients"
+    low, high = np.percentile(values, [low_pct, high_pct])
+    assert high > low, f"empty window [{low}, {high}]"
+    return float(low), float(high)
+
+
 def compute_global_stats(training_ids: list[str], source_path: Path,
                          clip_range: tuple[float, float], use_resample: bool, shape: tuple[int, int]):
     """
@@ -165,9 +184,14 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, 
-                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
+                  use_normalize: bool, mean: float, std: float, pad_fill_value: float,
+                  window_range: tuple[float, float] | None = None, test_mode: bool = False):
     ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = ct.shape[2]
+
+    # Second channel (--window): the raw HU clipped to the narrow soft-tissue window. Built from the raw values, before the wide
+    # clip below, so it does not depend on the clip range at all.
+    win_ct = np.clip(ct.astype(np.float32), *window_range) if window_range else None
 
     # Do the percentile clipping if needed.
     ct = clip_ct(ct, *clip_range) if clip_range else ct.astype(np.float32)
@@ -226,6 +250,20 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             gt_slice = crop_or_pad_to_grid(gt_slice, GRID_ROWS, GRID_COLS, center, fill_value=0)
             assert img_slice.shape == (GRID_ROWS, GRID_COLS)
             assert gt_slice.shape == (GRID_ROWS, GRID_COLS)
+
+        # Second channel: same geometry as the first (same resampling, same body centroid, same crop/pad), only the HU window differs.
+        # Scaled to [0, 1] with the window bounds, so air (clipped to the window floor) is exactly 0, which is also its pad value.
+        if window_range is not None:
+            w_lo, w_hi = window_range
+            if use_resample:
+                win_slice = resample_image_slice(win_ct[:, :, idz], (dx, dy))
+            else:
+                win_slice = resize(win_ct[:, :, idz], shape, order=1, mode="constant",
+                                   preserve_range=True, anti_aliasing=False)
+            win_slice = ((win_slice - w_lo) / (w_hi - w_lo)).astype(np.float32)
+            if use_resample:
+                win_slice = crop_or_pad_to_grid(win_slice, GRID_ROWS, GRID_COLS, center, fill_value=0.0)
+            img_slice = np.stack([img_slice, win_slice])  # (2, H, W); without --window the file stays (H, W) as before
 
         filename_stem = f"{id_}_{idz:04d}"
 
@@ -299,10 +337,22 @@ def main(args: argparse.Namespace):
     air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
     pad_fill_value = (air_value - mean) / std if args.normalize else air_value
 
+    # Soft-tissue window for the optional second channel: cutoffs from the training patients only (avoid data leakage)
+    if args.window:
+        print(">> Computing the soft-tissue window over the training set...")
+        window_range = compute_window_range(training_ids, src_path, args.window_class, *args.window_pct)
+        print(f">> window = [{window_range[0]:.1f}, {window_range[1]:.1f}] HU "
+              f"(percentiles {args.window_pct[0]:g}/{args.window_pct[1]:g} of class {args.window_class})")
+    else:
+        window_range = None
+
     # Save stats for future efficiency
     dest_path.mkdir(parents=True, exist_ok=True)
     with open(dest_path / "normalization_stats.json", "w") as f:
-        json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value}, f, indent=2)
+        # pad_fill_values has one entry per input channel (the window channel is scaled to [0, 1] with air at 0); the dataset's
+        # rotation/translation augmentation uses it to fill empty corners per channel.
+        json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value, "window_range": window_range,
+                   "pad_fill_values": [pad_fill_value] + ([0.0] if window_range else [])}, f, indent=2)
         print(f"Saved normalization stats to {f.name}")
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
@@ -323,6 +373,7 @@ def main(args: argparse.Namespace):
                                  mean=mean,
                                  std=std,
                                  pad_fill_value=pad_fill_value,
+                                 window_range=window_range,
                                  test_mode=mode == 'test')
         resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
@@ -360,7 +411,16 @@ def get_args() -> argparse.Namespace:
                              "If not set, falls back to the original fixed-shape stretch resize.")
     parser.add_argument('--normalize', action='store_true',
                         help="Z-score normalize using training set mean/std.")
+    parser.add_argument('--window', action='store_true',
+                        help="Add a second input channel: raw HU clipped to a narrow soft-tissue window and scaled to [0, 1]. "
+                             "Requires --window_pct. The saved image becomes (2, H, W).")
+    parser.add_argument('--window_pct', type=float, nargs=2, metavar=('LOW', 'HIGH'), default=None,
+                        help="Low/high percentile of the labeled voxels of --window_class that set the window cutoffs "
+                             "(see analyze_soft_tissue_window.py for the evidence).")
+    parser.add_argument('--window_class', type=int, default=1, help="Class whose HU values define the window (1 = esophagus).")
     args = parser.parse_args()
+    if args.window and args.window_pct is None:
+        parser.error("--window needs --window_pct LOW HIGH (e.g. --window_pct 2.5 99.5)")
     random.seed(args.seed)
 
     print(args)

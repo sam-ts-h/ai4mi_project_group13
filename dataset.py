@@ -62,6 +62,16 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     return list(zip(images, full_labels))
 
 
+def infer_in_channels(root) -> int:
+    """Number of input channels of a sliced dataset: 2 if its .npy slices are stacked as (2, H, W) (slice_segthor.py --window),
+    otherwise 1 (single-channel .npy, or the legacy TOY2 .png)."""
+    files = sorted((Path(root) / "train" / "img").glob("*.npy"))
+    if not files:
+        return 1
+    arr = np.load(files[0], mmap_mode="r")
+    return int(arr.shape[0]) if arr.ndim == 3 else 1
+
+
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
                  gt_transform=None, augmentation="combination_no_noise", augmentation_probability=0.5, equalize=False, debug=False):
@@ -93,7 +103,13 @@ class SliceDataset(Dataset):
         stats_path = Path(root_dir) / "normalization_stats.json"
         if stats_path.exists():
             with open(stats_path) as f:
-                self.pad_fill_value = json.load(f)["pad_fill_value"]
+                stats = json.load(f)
+            # one value per input channel if the JSON has the list (slice_segthor.py), else the old scalar. A single-channel
+            # list collapses to a scalar, so 1-channel datasets behave exactly as before.
+            fill = stats.get("pad_fill_values", stats["pad_fill_value"])
+            if isinstance(fill, (list, tuple)) and len(fill) == 1:
+                fill = fill[0]
+            self.pad_fill_value = fill
         else:
             self.pad_fill_value = 0.0
 
@@ -109,8 +125,8 @@ class SliceDataset(Dataset):
         # TOY2's legacy 0-255 data. GT is always .png, regardless of format.
         is_npy = img_path.suffix == ".npy"
         if is_npy:
-            img_arr = np.load(img_path)
-            img_open = torch.from_numpy(img_arr)[None, ...]  # (1, H, W) tensor -- TF.* accepts this directly
+            img_t = torch.from_numpy(np.load(img_path))
+            img_open = img_t[None, ...] if img_t.ndim == 2 else img_t  # (C, H, W) tensor, C = 1 or 2 -- TF.* accepts this directly
         else:
             img_open = Image.open(img_path)  # PIL Image, legacy TOY2 path
 

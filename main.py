@@ -40,9 +40,9 @@ from torch.utils.data import DataLoader
 
 from functools import partial 
 
-from dataset import SliceDataset
+from dataset import SliceDataset, infer_in_channels
 from ShallowNet import shallowCNN
-from ENet import ENet
+from ENet import ENet, ENetFullRes
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -60,6 +60,7 @@ datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'fac
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_fullres"] = {'K': 5, 'net': ENetFullRes, 'B': 8, 'kernels': 8, 'factor': 2}
 for split_seed in (42, 43, 44):
     datasets_params[f"SEGTHOR_full_split{split_seed}"] = datasets_params["SEGTHOR"].copy()
 
@@ -115,12 +116,15 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
         torch.mps.manual_seed(args.seed)
 
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
+
+    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
 
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    #net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    net = datasets_params[args.dataset]['net'](infer_in_channels(root_dir), K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
@@ -129,7 +133,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
+    
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
@@ -139,7 +143,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              debug=args.debug)
     train_loader = DataLoader(train_set,
                               batch_size=B,
-                              num_workers=5,
+                              num_workers=12,
                               shuffle=True)
 
     val_set = SliceDataset('val',
@@ -150,7 +154,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            debug=args.debug)
     val_loader = DataLoader(val_set,
                             batch_size=B,
-                            num_workers=5,
+                            num_workers=12,
                             shuffle=False)
 
     args.dest.mkdir(parents=True, exist_ok=True)
@@ -167,6 +171,8 @@ def runTraining(args):
 
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
+
+    print(f"using augmentation {args.augmentation} with probability {args.augmentation_probability}")
 
     if args.mode == "full":
         loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
