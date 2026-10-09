@@ -8,13 +8,13 @@ from pathlib import Path
 # finished runs are skipped, and an unfinished run starts over.
 
 SEEDS = [(42, 0), (43, 1), (44, 2)]
-LOSSES = ['ceWDice', 'ceFocalDice', 'ceFocalTversky']
-EPOCHS = 50
+LOSSES = ['ce', 'ceDice', 'ceFocalTversky']
+EPOCHS = 25
 # no --distmap anymoreso workers are light so more than 4 (also vu compute server seems to hold its own well)
 PROCESSES = 8
 
 sourceDir = Path("data/segthor_train_full")
-experimentsDir = Path("experiments")
+experimentsDir = Path("experiments_window")
 
 for splitSeed, trainSeed in SEEDS:
     dataset = f"SEGTHOR_full_split{splitSeed}"
@@ -40,6 +40,7 @@ for splitSeed, trainSeed in SEEDS:
                         "--retains", "10", "--fold", "0", "--seed", str(splitSeed),
                         #add distmap hier for boundary
                         "--clip", "--resample", "--normalize",
+                        "--window", "--window_pct", "10", "99.5",
                         "-p", str(PROCESSES)], check=True)
         (dataDir / "sliced.txt").touch()
 
