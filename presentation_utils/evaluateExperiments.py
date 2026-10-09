@@ -3,15 +3,19 @@ import subprocess
 from pathlib import Path
 
 #Can reuse later, just make sure we change the path to own runs
-experimentsDir = Path("../experiments")
-gtDir = Path("../data/segthor_train_full/train")
+experimentsDir = Path("./experiments")
+gtDir = Path("./data/segthor_train_full/train")
 
 # prediction folder : (volumes folder, metrics folder) - volumen by stitch 
 epochs = {
     'best_epoch': ('volumes', 'metrics'),
     'iter049': ('volumesLast', 'metricsLast'),
 }
-runDirs = sorted(experimentsDir.glob("split*/*/"))
+# old ones done already so just these
+losses = ['ceWDice', 'ceFocalDice', 'ceFocalTversky']
+runDirs = []
+for loss in losses:
+    runDirs += sorted(experimentsDir.glob(f"split*/{loss}/"))
 print(f"found {len(runDirs)} runs")
 
 for runDir in runDirs:

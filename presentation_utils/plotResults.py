@@ -2,21 +2,22 @@ import csv
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-EPOCH = 'last'
-experimentsDir = Path("../experiments")
-plotDir = experimentsDir / "plots" / EPOCH
+EPOCH = 'best'
+experimentsDir = Path("./experiments")
+plotDir = experimentsDir / "plots" / "best_all"
 plotDir.mkdir(parents=True, exist_ok=True) #make plots if not exist too
 metricsFolder = "metrics" if EPOCH == 'best' else "metricsLast" #Used to see if picking by the 2ddice is not a bit weird (kept for future lookup)
-losses = ['ce', 'ceDice', 'ceDiceBoundary']
+losses = ['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice', 'ceFocalDice', 'ceFocalTversky']
 splits = ['split42_seed0', 'split43_seed1', 'split44_seed2']
 colors = ['#0173B2', '#DE8F05', '#029E73']
 
 # name in summary.csv to x axis label so bit more readable
 metrics = {
-    'dsc': '3D Dice (4 organs)',
-    'hd95': 'HD95 in mm (4 organs, lower is better)',
-    'assd': 'ASSD in mm (4 organs, lower is better)',
-    'fpSliceRate': 'False positive slice rate (4 organs, lower is better)',
+    'dsc': '3D Dice',
+    'hd95': 'HD95 in mm (lower is better)',
+    'assd': 'ASSD in mm (lower is better)',
+    'fpSliceRate': 'False positive slice rate (lower is better)',
+    'sliceDice': '2D val Dice per slice',
 }
 
 # results[metric][loss] so one per split
@@ -35,8 +36,12 @@ for loss in losses:
                 if row['metric'] in metrics:
                     results[row['metric']][loss].append(float(row['combined']))
 
+        # dice_val is (epoch, slice, class) same as old (to check)
+        sliceDice = np.load(runDir / "dice_val.npy")[:, :, 1:].mean(axis=(1, 2))#no background
+        results['sliceDice'][loss].append(sliceDice.max() if EPOCH == 'best' else sliceDice[-1])
+
 for metric, label in metrics.items():
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    fig, ax = plt.subplots(figsize=(9, 6))
     
     for i, loss in enumerate(losses):
         values = np.array(results[metric][loss])
