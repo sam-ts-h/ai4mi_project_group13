@@ -107,22 +107,24 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False, use_re
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
+    original_dz = dz
+
     if use_resample_z:
         ct = resample_volume_z(
             ct,
-            orig_dz=dz,
+            orig_dz=original_dz,
             target_z_spacing_mm=TARGET_Z_SPACING_MM,
             order=1,
         )
 
         gt = resample_volume_z(
             gt,
-            orig_dz=dz,
+            orig_dz=original_dz,
             target_z_spacing_mm=TARGET_Z_SPACING_MM,
             order=0,
         )
 
-    dz = TARGET_Z_SPACING_MM
+        dz = TARGET_Z_SPACING_MM
 
     return ct, gt, (dx, dy, dz)
 
@@ -329,6 +331,17 @@ def main(args: argparse.Namespace):
         json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value}, f, indent=2)
         print(f"Saved normalization stats to {f.name}")
 
+    original_z_spacing: dict[str, float] = {}
+
+    for id_ in training_ids + validation_ids:
+        _, _, (dx, dy, original_dz) = load_patient_ct(
+            id_,
+            src_path,
+            test_mode=False,
+            use_resample_z=False,
+        )
+        original_z_spacing[id_] = float(original_dz)
+
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
     split_ids: list[str]
@@ -366,6 +379,9 @@ def main(args: argparse.Namespace):
     with open(dest_path / "spacing.pkl", 'wb') as f:
         pickle.dump(resolution_dict, f, pickle.HIGHEST_PROTOCOL)
         print(f"Saved spacing dictionnary to {f}")
+    with open(dest_path / "original_z_spacing.pkl", "wb") as f:
+        pickle.dump(original_z_spacing, f, pickle.HIGHEST_PROTOCOL)
+        print(f"Saved original z-spacing dictionary to {f}")
 
 
 def get_args() -> argparse.Namespace:

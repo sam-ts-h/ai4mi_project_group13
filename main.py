@@ -131,6 +131,14 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
     root_dir = Path(args.data_dir) if args.data_dir else Path("data") / args.dataset
+    if args.physical_context:
+        half = args.context_size // 2
+        physical_context_mm = [
+            3.0 * offset
+            for offset in range(-half, half + 1)
+        ]
+    else:
+        physical_context_mm = None
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
@@ -138,7 +146,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              augmentation = args.augmentation,
                              augmentation_probability=args.augmentation_probability,
                              debug=args.debug,
-                             context_size = args.context_size)
+                             context_size = args.context_size,
+                             physical_context_mm=physical_context_mm)
     # !increased num_workers from 5 to 12; in combination with OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 1 worker is very cheap now
     train_loader = DataLoader(train_set,
                               batch_size=B,
@@ -154,7 +163,9 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            gt_transform=partial(gt_transform, K),
                            augmentation="none", augmentation_probability=1.0,
                            debug=args.debug,
-                           context_size = args.context_size)
+                           context_size = args.context_size,
+                           physical_context_mm=physical_context_mm)
+
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=12,
@@ -325,10 +336,12 @@ def main():
     )
 
     parser.add_argument('--context_size', type=int, default = 1, help = 'number of slices to stack as channels, if context = 1 (2D) if more (2.5D), has to be an odd number')
+    parser.add_argument('--physical_context',action='store_true', help='Use fixed physical z-context in millimetres instead of consecutive slices.')
+
     args = parser.parse_args()
     pprint(args)
     runTraining(args)
-
+    
 
 if __name__ == '__main__':
     main()

@@ -25,6 +25,7 @@
 import json
 import random
 import torch
+import pickle
 
 from pathlib import Path
 from typing import Callable, Union
@@ -63,8 +64,7 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 
 class SliceDataset(Dataset):
-    def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augmentation="combination_no_noise", augmentation_probability=0.5, equalize=False, debug=False, context_size: int =1):
+    def __init__(self,subset,root_dir,img_transform=None,gt_transform=None,augmentation="combination_no_noise",augmentation_probability=0.5,equalize=False,debug=False,context_size: int = 1, physical_context_mm=None):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
@@ -72,19 +72,54 @@ class SliceDataset(Dataset):
         self.augmentation_probability: float = augmentation_probability
         self.subset = subset
         self.context_size: int = context_size
+        self.physical_context_mm = physical_context_mm
+
+        if self.physical_context_mm is not None:
+            if len(self.physical_context_mm) != context_size:
+                raise ValueError(
+                    f"physical_context_mm has {len(self.physical_context_mm)} "
+                    f"positions, but context_size={context_size}"
+                )
+
+            if context_size % 2 == 0:
+                raise ValueError(
+                    f"context_size must be odd for physical context, got {context_size}"
+                )
 
         if not 0.0 <= self.augmentation_probability <= 1.0:
             raise ValueError(
-                f"augmentation_probability must be in [0.0, 1.0], got {self.augmentation_probability}"
+                f"augmentation_probability must be in [0.0, 1.0], "
+                f"got {self.augmentation_probability}"
             )
-        self.equalize: bool = equalize
 
+        self.equalize: bool = equalize
         self.test_mode: bool = subset == 'test'
 
         self.files = make_dataset(root_dir, subset)
+
         if debug:
             self.files = self.files[:10]
 
+        self.patient_to_indices = {}
+
+        for i, (img_path, _) in enumerate(self.files):
+            patient_id = self._patient_id(img_path)
+            self.patient_to_indices.setdefault(patient_id, []).append(i)
+
+        self.processed_spacing = {}
+
+        spacing_path = Path(root_dir) / "spacing.pkl"
+
+        if spacing_path.exists():
+            with open(spacing_path, "rb") as f:
+                spacing_dict = pickle.load(f)
+
+            for patient_id, spacing in spacing_dict.items():
+                self.processed_spacing[patient_id] = float(spacing[2])
+        else:
+            raise FileNotFoundError(
+                f"Could not find spacing information at {spacing_path}"
+            )
         # Fill value for augmentation's empty corners (rotation/translation),
         # matching the SAME "air" value slice_segthor.py's crop/pad already
         # uses -- NOT a flat 0, since 0 means something different on raw/
@@ -92,13 +127,18 @@ class SliceDataset(Dataset):
         # Falls back to 0 for TOY2, which has no normalization_stats.json at
         # all (it's produced by the separate gen_two_circles.py pipeline).
         stats_path = Path(root_dir) / "normalization_stats.json"
+
         if stats_path.exists():
             with open(stats_path) as f:
                 self.pad_fill_value = json.load(f)["pad_fill_value"]
         else:
             self.pad_fill_value = 0.0
 
-        print(f">> Created {subset} dataset with {len(self)} images (context_size={context_size})...")
+        print(
+            f">> Created {subset} dataset with {len(self)} images "
+            f"(context_size={context_size}, "
+            f"physical_context_mm={self.physical_context_mm})..."
+        )
 
     def __len__(self):
         return len(self.files)
@@ -116,26 +156,151 @@ class SliceDataset(Dataset):
         if self._patient_id(neighbor_path) != self._patient_id(center_path):
             return center_path
         return neighbor_path
+        """
+        def _get_physical_context_paths(self, index: int) -> list[Path]:
+        center_path, _ = self.files[index]
+        patient_id = self._patient_id(center_path)
+
+        if patient_id not in self.original_z_spacing:
+            raise KeyError(
+                f"No original z-spacing found for patient {patient_id}"
+            )
+
+        patient_indices = self.patient_to_indices[patient_id]
+
+        center_position = patient_indices.index(index)
+
+        spacing_path = Path(self.root_dir) / "spacing.pkl"
+        with open(spacing_path, "rb") as f:
+            spacing_dict = pickle.load(f)
+
+        processed_dz = float(self.processed_spacing[patient_id][2])
+
+        selected_paths = []
+
+        for offset_mm in self.physical_context_mm:
+            # Convert physical offset to the nearest available slice
+            # on the processed z-grid.
+            slice_offset = int(round(offset_mm / processed_dz))
+            target_position = center_position + slice_offset
+
+            if target_position < 0 or target_position >= len(patient_indices):
+                selected_paths.append(center_path)
+                continue
+
+            target_global_index = patient_indices[target_position]
+            target_path, _ = self.files[target_global_index]
+
+            selected_paths.append(target_path)
+
+        return selected_paths"""
+
+    def _get_physical_context_arrays(self, index: int) -> list[np.ndarray]:
+
+        center_path, _ = self.files[index]
+        patient_id = self._patient_id(center_path)
+
+        if patient_id not in self.processed_spacing:
+            raise KeyError(
+                f"No processed z-spacing found for patient {patient_id}"
+            )
+
+        patient_indices = self.patient_to_indices[patient_id]
+
+        # Position of the centre slice within this patient's slice list.
+        center_position = patient_indices.index(index)
+
+        # Physical distance between two saved slices.
+        dz = self.processed_spacing[patient_id]
+
+        context_arrays = []
+
+        for offset_mm in self.physical_context_mm:
+
+            # Convert requested physical distance into a fractional
+            # position on the saved slice grid.
+            relative_position = offset_mm / dz
+            target_position = center_position + relative_position
+
+            # At the beginning/end of a patient volume, clamp to the
+            # nearest available slice.
+            target_position = max(
+                0.0,
+                min(
+                    target_position,
+                    float(len(patient_indices) - 1),
+                ),
+            )
+
+            lower_position = int(np.floor(target_position))
+            upper_position = int(np.ceil(target_position))
+
+            lower_global_index = patient_indices[lower_position]
+            lower_path, _ = self.files[lower_global_index]
+
+            lower_img = np.load(lower_path).astype(np.float32)
+
+            # Requested position lies exactly on a saved slice.
+            if lower_position == upper_position:
+                interpolated = lower_img
+
+            else:
+                upper_global_index = patient_indices[upper_position]
+                upper_path, _ = self.files[upper_global_index]
+
+                upper_img = np.load(upper_path).astype(np.float32)
+
+                # Fraction between lower and upper slice.
+                alpha = target_position - lower_position
+
+                interpolated = (
+                    (1.0 - alpha) * lower_img
+                    + alpha * upper_img
+                )
+
+            context_arrays.append(interpolated.astype(np.float32))
+
+        return context_arrays
 
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
- 
-        half = self.context_size // 2
-        slice_paths = [self._get_neighbour_path(index, offset)
-                       for offset in range(-half, half + 1)]
- 
-        #load every slice in the stack as a raw, no transformations
-        opened = []
-        is_npy_list = []
-        for p in slice_paths:
-            is_npy = p.suffix == ".npy"
-            is_npy_list.append(is_npy)
-            if is_npy:
-                img_arr = np.load(p)
-                opened.append(torch.from_numpy(img_arr)[None, ...])  # (1, H, W)
-            else:
-                opened.append(Image.open(p))
+
+        if self.physical_context_mm is not None:
+            context_arrays = self._get_physical_context_arrays(index)
+
+            opened = [
+                torch.from_numpy(arr)[None, ...]
+                for arr in context_arrays
+            ]
+
+            is_npy_list = [True] * len(opened)
+
+        else:
+            half = self.context_size // 2
+
+            slice_paths = [
+                self._get_neighbour_path(index, offset)
+                for offset in range(-half, half + 1)
+            ]
+
+            # Load every slice in the stack without transformations yet.
+            opened = []
+            is_npy_list = []
+
+            for p in slice_paths:
+                is_npy = p.suffix == ".npy"
+                is_npy_list.append(is_npy)
+
+                if is_npy:
+                    img_arr = np.load(p)
+                    opened.append(
+                        torch.from_numpy(img_arr)[None, ...]
+                    )
+                else:
+                    opened.append(Image.open(p))
+
         is_npy = is_npy_list[0]
+        center_idx = len(opened) // 2
  
         if not self.test_mode:
             gt_open = Image.open(gt_path)
@@ -164,7 +329,7 @@ class SliceDataset(Dataset):
                 do_affine = True
  
             elif augmentation == "translation":
-                w, h = wh(opened[half])
+                w, h = wh(opened[center_idx])
                 max_dx = int(0.05 * w)
                 max_dy = int(0.05 * h)
                 translate = [random.randint(-max_dx, max_dx), random.randint(-max_dy, max_dy)]
@@ -183,7 +348,7 @@ class SliceDataset(Dataset):
                 angle = random.uniform(-10, 10) if apply_rotation else 0.0
  
                 if apply_translation:
-                    w, h = wh(opened[half])
+                    w, h = wh(opened[center_idx])
                     max_dx = int(0.05 * w)
                     max_dy = int(0.05 * h)
                     translate = [random.randint(-max_dx, max_dx), random.randint(-max_dy, max_dy)]
