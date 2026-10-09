@@ -40,9 +40,9 @@ from torch.utils.data import DataLoader
 
 from functools import partial
 
-from dataset import SliceDataset
+from dataset import SliceDataset, infer_in_channels
 from ShallowNet import shallowCNN
-from ENet import ENet
+from ENet import ENet, ENetFullRes
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -60,6 +60,7 @@ datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'fac
 datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_fullres"] = {'K': 5, 'net': ENetFullRes, 'B': 8, 'kernels': 8, 'factor': 2}
 for split_seed in (42, 43, 44):
     datasets_params[f"SEGTHOR_full_split{split_seed}"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
@@ -117,10 +118,13 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
+
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    #net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    net = datasets_params[args.dataset]['net'](infer_in_channels(root_dir), K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
@@ -129,11 +133,11 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
 
     # Can skip loading if not distance based metric
     loadDistMaps: bool = args.loss == 'ceDiceBoundary'
 
+    
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
@@ -178,6 +182,7 @@ def runTraining(args):
 
     # falls back to K for datasets where every class has data
     scoredClasses: int = datasets_params[args.dataset].get('scored', K)
+    print(f"using augmentation {args.augmentation} with probability {args.augmentation_probability}")
 
     if args.mode == "full":
         ceIdk = list(range(K))  # Supervise both background and foreground
