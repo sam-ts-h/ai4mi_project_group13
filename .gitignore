@@ -11,3 +11,14 @@ eda_output/
 
 projects
 .DS_Store
+
+results/*
+results/
+splits/*
+splits/
+
+experiment_512crop_no_aug_log.txt
+experiment_log_2.txt
+experiment_log_16kernels.txt
+experiment_log.txt
+experiment_log_adamW.txt
