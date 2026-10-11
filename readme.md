@@ -1,5 +1,133 @@
 # AI for medical imaging — Fall 2026 group project
 
+## full pipeline
+
+Our final configuration:
+* Preprocessing: [0.5, 99.5] percentile HU value clipping, xy resampling to 1 mm, body-centered cropping to 512 x 352 mm, z-normalization, 2nd window with [10, 99.5] HU clipping
+* Augmentation: roration (), translation (), scaling () with application probability of 0.5
+* Architecture: standard 2D ENet with 16 kernels and factor 2
+* Training parameters: batch-size 8, learning rate: 5e-4, Adam (betas: 0.99, 0.999)
+* Loss: CE (all classes) + DSC (only foreground) loss
+* Postprocessing: Small Components
+
+Set-up:
+* export OMP_NUM_THREADS=1 and export MKL_NUM_THREADS=1 with workers=12
+* run every training with -O to deactivate asserts and increase training efficiency by ~60%
+
+
+Our final pipeline end2end:
+
+1) Preprocessing:
+
+for seed in 42 43 44; do
+  python slice_segthor.py \
+    --source_dir data/segthor \
+    --dest_dir splits/SEGTHOR_full_split${seed} \
+    --retains 10 --fold 0 --seed ${seed} \
+    --clip --resample --normalize \
+    --window --window_pct 10 99.5 --window_class 1 \
+    -p 8
+done
+
+2) Training:
+
+for seed in 42 43 44; do
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -O main.py \
+    --dataset SEGTHOR_full_split${seed} \
+    --data_dir /local/data/ipv577/projects/ai4mi_project_group13/splits/SEGTHOR_full_split${seed} \
+    --mode full \
+    --loss ceDice \
+    --dest results/final/seed${seed} \
+    --epochs 100 \
+    --seed ${seed} \
+    --gpu
+done
+
+smoke test train run
+
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -O main.py \
+  --dataset SEGTHOR_full_split42 \
+  --data_dir /local/data/ipv577/projects/ai4mi_project_group13/splits/SEGTHOR_full_split42 \
+  --mode full \
+  --loss ceDice \
+  --dest /tmp/smoke \
+  --epochs 3 \
+  --seed 42 \
+  --gpu --debug
+
+smoke test
+
+python - <<'EOF'
+import numpy as np, torch
+from pathlib import Path
+out = Path("/tmp/smoke")
+for f in ("dice_val.npy","loss_val.npy","loss_ce_tra.npy","loss_dice_tra.npy"):
+    print(f, "OK" if (out/f).is_file() else "MISSING")
+d = np.load(out/"dice_val.npy"); print("dice shape", d.shape, "finite", np.isfinite(d).all())
+w = torch.load(out/"bestweights.pt", map_location="cpu")
+k = [x for x in w if "conv0.weight" in x][0]
+print("conv0", tuple(w[k].shape), "  <- (K-in_dim, in_dim, 3, 3), in_dim has to be 2")
+print("PNGs", len(list((out/"best_epoch"/"val").glob("*.png"))))
+EOF
+
+3) Stitching:
+
+for seed in 42 43 44; do
+  python stitch.py \
+    --data_folder /local/data/ipv577/projects/ai4mi_project_group13/results/final/seed${seed}/best_epoch/val \
+    --source_scan_pattern "data/segthor/train/{id_}/{id_}.nii.gz" \
+    --dest_folder results/final/seed${seed}/stitched \
+    --grp_regex "(Patient_\d+)_\d+" \
+    --num_classes 5 \
+    --crop_centers splits/SEGTHOR_full_split${seed}/crop_centers.pkl
+done
+
+stitching dry run
+python stitch.py \
+  --data_folder /local/data/ipv577/projects/ai4mi_project_group13/splits/SEGTHOR_full_split42/val/gt \
+  --source_scan_pattern "/local/data/ipv577/projects/ai4mi_project_group13/data/segthor/train/{id_}/{id_}.nii.gz" \
+  --dest_folder /tmp/gt_rt \
+  --grp_regex "(Patient_\d+)_\d+" \
+  --num_classes 5 \
+  --crop_centers /local/data/ipv577/projects/ai4mi_project_group13/splits/SEGTHOR_full_split42/crop_centers.pkl
+
+4) Advanced Metrics (pre post-processing):
+
+for seed in 42 43 44; do
+  python metrics.py \
+    --pred_folder results/final/seed${seed}/stitched \
+    --gt_folder data/segthor/train \
+    --dest_folder results/final/seed${seed}/metrics_pre_pp
+done
+
+5) Postprocessing (small connected components):
+
+for seed in 42 43 44; do
+  python postprocess_small_components.py \
+    --input_dir results/final/seed${seed}/stitched \
+    --output_dir results/final/seed${seed}/stitched_sc \
+    --min_voxels 50 --min_fraction 0.01
+done
+
+6) Advanced Metrics (post post-processing):
+
+for seed in 42 43 44; do
+  python metrics.py \
+    --pred_folder results/final/seed${seed}/stitched_sc \
+    --gt_folder data/segthor/train \
+    --dest_folder results/final/seed${seed}/metrics_post_pp
+done
+
+## inference pipeline
+
+1) clip HU to 0.5,99.5 percentile HU values of training statistics; 2nd window Range 10,99.5 percentile HU values from training statistics; meand & std from training statistics (normalization_stats.json)
+2) slice_segthor.py
+3) load model, run inference
+4) stitch
+5) metrics
+
+
+
 <!-- MarkdownTOC autolink="true" autoanchor="true" -->
 
 - [Project overview](#project-overview)

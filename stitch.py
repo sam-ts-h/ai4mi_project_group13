@@ -60,7 +60,11 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
         z = get_z(img)
         img_arr = imread(img)
         assert img_arr.dtype == np.uint8
-        assert set(np.unique(img_arr)) <= set(range(K))
+        #assert set(np.unique(img_arr)) <= set(range(K))
+        # main.py writes class_index * 63 so the PNG stays viewable. Decode here, not at the
+        # end like befroe, so every later check and the crop arithmetic work on real class indices.
+        assert set(np.unique(img_arr)) <= {0, 63, 126, 189, 252}, np.unique(img_arr)
+        img_arr = (img_arr // 63).astype(np.uint8)
 
         # Undo the crop/pad of slice_segthor.py --resample: put the prediction back on the resampled slice
         # at the same window, anything outside the window was never predicted so its background
@@ -89,12 +93,9 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
 
         res_arr[:, :, z] = resized[...]
 
-    assert set(np.unique(res_arr)) <= set(range(K))
+    # ! change here since we already decoded above.
+    assert set(np.unique(res_arr)) <= set(range(K)), np.unique(res_arr)
     assert orig_shape == res_arr.shape, (orig_shape, res_arr.shape)
-
-    # res_arr = res_arr.astype(np.int16)
-    res_arr //= 63  # For segthor only
-    assert set(np.unique(res_arr)) <= set(range(5)), np.uint8(res_arr)
 
     new_nib = nib.nifti1.Nifti1Image(res_arr, affine=orig_nib.affine, header=orig_nib.header)
     nib.save(new_nib, (Path(dest_folder) / id_).with_suffix(".nii.gz"))

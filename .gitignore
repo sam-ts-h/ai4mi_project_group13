@@ -2,6 +2,9 @@ data/*
 !data/*.b3sum
 !data/*.sha256
 results/
+results/*
+splits/
+splits/*
 volumes/
 ai4mi/
 ai4mi_venv/
@@ -11,3 +14,10 @@ eda_output/
 
 projects
 .DS_Store
+
+metrics3d_log.txt
+old/
+old/*
+
+plot_metrics3d.py
+run_metrics3d.sh

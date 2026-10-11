@@ -57,7 +57,7 @@ datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
 # Avoids the classes with C (often used for the number of Channel)
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
-datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 16, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_fullres"] = {'K': 5, 'net': ENetFullRes, 'B': 8, 'kernels': 8, 'factor': 2}
@@ -353,7 +353,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--seed', default=0, type=int, help = "Seed for random weight init and data shuffling.")
-    parser.add_argument('--epochs', default=20, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys(),
                         help="Which network/K/batch-size config to use.")
     parser.add_argument('--data_dir', type=str, default=None,
@@ -362,7 +362,7 @@ def main():
                              "SEGTHOR_clip). Config (K, network, batch size) still comes from "
                              "--dataset, e.g. --dataset SEGTHOR --data_dir SEGTHOR_clip.")
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice', 'ceFocalDice', 'ceFocalTversky'])
+    parser.add_argument('--loss', default='ceDice', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice', 'ceFocalDice', 'ceFocalTversky'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
