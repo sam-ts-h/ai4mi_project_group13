@@ -62,7 +62,7 @@ datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'k
 datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_fullres"] = {'K': 5, 'net': ENetFullRes, 'B': 8, 'kernels': 8, 'factor': 2}
 for split_seed in (42, 43, 44):
-    datasets_params[f"SEGTHOR_full_split{split_seed}"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+    datasets_params[f"SEGTHOR_full_split{split_seed}"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 16, 'factor': 2}
 
 
 def img_transform(img):
