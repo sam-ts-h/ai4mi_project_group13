@@ -36,15 +36,18 @@ import numpy as np
 import nibabel as nib
 from skimage.io import imsave
 from skimage.transform import resize
+from scipy.ndimage import distance_transform_edt
 
 from utils import map_, tqdm_
 from preprocessing_common import (GRID_ROWS, GRID_COLS,
                                   resample_image_slice, resample_mask_slice,
-                                  crop_or_pad_to_grid)
+                                  body_mask_2d, body_centroid, crop_or_pad_to_grid)
 
 # Raw HU floor when clipping is OFF for a given ablation run: not a design choice, it's just the dataset's own guaranteed floor.
 # Used only to define what "air" means for the padding fill value when --clip is not passed.
 RAW_AIR_FLOOR = -1000.0
+
+NUM_CLASSES: int = 5
 
 def clip_ct(img: np.ndarray, clip_min: float, clip_max: float) -> np.ndarray:
     """
@@ -88,7 +91,6 @@ def load_patient_ct(id_: str, source_path: Path, test_mode: bool = False):
     Load one patient's raw CT (and GT, unless test_mode). Factored out clipping since both slice_patient() and 
     compute_global_stats() need to load and clip the same raw data.
     """
-
     id_path: Path = source_path / ("train" if not test_mode else "test") / id_
 
     ct_path: Path = (id_path / f"{id_}.nii.gz") if not test_mode else (source_path / "test" / f"{id_}.nii.gz")
@@ -130,8 +132,27 @@ def compute_clip_range(training_ids: list[str], source_path: Path, n_samples: in
     low, high = np.percentile(np.concatenate(samples), [0.5, 99.5])
     return float(low), float(high)
 
+def compute_window_range(training_ids: list[str], source_path: Path, class_id: int,
+                         low_pct: float, high_pct: float) -> tuple[float, float]:
+    """
+    Cutoffs of the soft-tissue window (second input channel): the low/high percentile of the raw HU values inside the 
+    ground-truth label class_id (1 = esophagus), pooled over the training patients only, so validation data never influences 
+    them (avoid data leakage). Uses every labeled voxel (no subsampling), so the result is exact and deterministic. 
+    analyze_soft_tissue_window.py shows the evidence for which percentiles to pick.
+    """
+    values = []
+    for id_ in tqdm_(training_ids, desc="Computing window range"):
+        ct, gt, _ = load_patient_ct(id_, source_path, test_mode=False)
+        values.append(ct[gt == class_id].astype(np.float32))
+    values = np.concatenate(values)
+    assert values.size > 0, f"no voxels labeled {class_id} in the training patients"
+    low, high = np.percentile(values, [low_pct, high_pct])
+    assert high > low, f"empty window [{low}, {high}]"
+    return float(low), float(high)
+
+
 def compute_global_stats(training_ids: list[str], source_path: Path,
-                         clip_range: tuple[float, float], use_resample: bool, use_crop: bool, air_value: float, shape: tuple[int, int]):
+                         clip_range: tuple[float, float], use_resample: bool, shape: tuple[int, int]):
     """
     Two-pass normalization. pass 1: compute a single dataset-wide mean and std, over every pixel of every clipped, resampled 
     training slice (never validation or test, since computing stats from data you'll later evaluate on is data leakage). 
@@ -152,13 +173,6 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
             else:
                 resampled = resize(ct[:, :, idz], shape, order=1, mode="constant",
                                    preserve_range=True, anti_aliasing=False).astype(np.float32)
-            
-            # mirror pass the second runs crop so mean and std get calculated correctly (over the exact same pixels)
-            if use_crop:
-                center = (resampled.shape[0] / 2, resampled.shape[1] / 2)
-                resampled = crop_or_pad_to_grid(resampled, GRID_ROWS, GRID_COLS,
-                                                center, fill_value=air_value)
-
             # Accumulate in float64: total_count will run into the hundreds of millions of pixels across the full training set, 
             # and a float32 running sum could start losing real precision.
             total_sum += resampled.sum(dtype=np.float64)
@@ -172,11 +186,15 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
     return float(mean), std
 
 
-def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, use_crop: bool, 
-                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
-
+def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, 
+                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, use_distmap: bool = False,
+                  window_range: tuple[float, float] | None = None, test_mode: bool = False):
     ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = ct.shape[2]
+
+    # Second channel (--window): the raw HU clipped to the narrow soft-tissue window. Built from the raw values, before the wide
+    # clip below, so it does not depend on the clip range at all.
+    win_ct = np.clip(ct.astype(np.float32), *window_range) if window_range else None
 
     # Do the percentile clipping if needed.
     ct = clip_ct(ct, *clip_range) if clip_range else ct.astype(np.float32)
@@ -185,6 +203,24 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     gt_save_path: Path = Path(dest_path, "gt")
     img_save_path.mkdir(parents=True, exist_ok=True)
     gt_save_path.mkdir(parents=True, exist_ok=True)
+
+    # 3D signed distance maps on the raw gt, before any resampling or cropping. spacing in mm so the
+    # distances are real 3D mm and stay valid after resampling and croppin
+    if use_distmap:
+        distSavePath: Path = Path(dest_path, "distmap")
+        distSavePath.mkdir(parents=True, exist_ok=True)
+        distMaps = np.zeros((NUM_CLASSES, *gt.shape), dtype=np.float16)
+        for k in range(NUM_CLASSES):
+            mask = gt == k
+            # If no borders dont run code, errors
+            if mask.any() and not mask.all():
+                outside = ~mask
+                distOutside = distance_transform_edt(outside, sampling=(dx, dy, dz))
+                distInside = distance_transform_edt(mask, sampling=(dx, dy, dz))
+                distMaps[k] = distOutside * outside - distInside * mask
+
+    # stitch.py needs the crop center of every slice to put predictions back in the original scan
+    cropCenters = {}
 
     for idz in range(z):
         # Resample each slice to a common in-plane spacing. This is what makes the same real-world organ size occupy the same
@@ -202,10 +238,27 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             
         assert img_slice.shape == gt_slice.shape
 
-        # Geometric center: identical for every slice of every patient, so the crop
-        # window never shifts between neighbouring slices.
-        # ! changed
-        center = (img_slice.shape[0] / 2, img_slice.shape[1] / 2)
+        # distances are smooth so linear like the image, not nearest like the gt
+        if use_distmap:
+            distSlice = np.zeros((NUM_CLASSES, *gt_slice.shape), dtype=np.float32)
+            for k in range(NUM_CLASSES):
+                classSlice = distMaps[k, :, :, idz].astype(np.float32)
+                if use_resample:
+                    distSlice[k] = resample_image_slice(classSlice, (dx, dy))
+                else:
+                    distSlice[k] = resize(classSlice, shape, order=1, mode="constant",
+                                          preserve_range=True, anti_aliasing=False)
+
+        if use_resample:
+            # Crop/pad is only meaningful after resampling, since original fixed resize already produces same grid size
+            # Body detection happens here, on the resampled but not yet normalized HU slice, since  body_mask_2d's thresholds are 
+            # in real HU units, which are meaningless once z-scored. 
+            mask = body_mask_2d(img_slice)
+            center = body_centroid(mask)
+            if center is None:
+                # No tissue above threshold at all in this slice (e.g. a mostly empty slice right at the very top/bottom of the scan),
+                # fall back to the slice's own geometric center.
+                center = (img_slice.shape[0] / 2, img_slice.shape[1] / 2)
 
         # Normalize after resampling, using taining mean/std
         # The same fixed mean/std is applied identically whether this call is processing a train or val patient,
@@ -224,13 +277,41 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         # Crop/pad both the image and GT to the same fixed grid, centered on the same body centroid. 
         # Image padding uses pad_fill_value (the normalized-space equivalent of real air HU, precomputed once in main()).
         # GT padding uses 0 (background class) since padded regions have no real anatomy.
-        if use_crop:
+        if use_resample:
             img_slice = crop_or_pad_to_grid(img_slice, GRID_ROWS, GRID_COLS, center, fill_value=pad_fill_value)
             gt_slice = crop_or_pad_to_grid(gt_slice, GRID_ROWS, GRID_COLS, center, fill_value=0)
             assert img_slice.shape == (GRID_ROWS, GRID_COLS)
             assert gt_slice.shape == (GRID_ROWS, GRID_COLS)
 
+            # same center as the image so the distances stay on top of the gt.
+            # Padding is background far from every organ: so the max (furthest outside) for the organs,
+            # and the min (deepest inside) for the background class
+            if use_distmap:
+                croppedDist = np.zeros((NUM_CLASSES, GRID_ROWS, GRID_COLS), dtype=np.float32)
+                for k in range(NUM_CLASSES):
+                    if k == 0:
+                        fillValue = distSlice[k].min()
+                    else:
+                        fillValue = distSlice[k].max()
+                    croppedDist[k] = crop_or_pad_to_grid(distSlice[k], GRID_ROWS, GRID_COLS, center, fill_value=fillValue)
+                distSlice = croppedDist
+        # Second channel: same geometry as the first (same resampling, same body centroid, same crop/pad), only the HU window differs.
+        # Scaled to [0, 1] with the window bounds, so air (clipped to the window floor) is exactly 0, which is also its pad value.
+        if window_range is not None:
+            w_lo, w_hi = window_range
+            if use_resample:
+                win_slice = resample_image_slice(win_ct[:, :, idz], (dx, dy))
+            else:
+                win_slice = resize(win_ct[:, :, idz], shape, order=1, mode="constant",
+                                   preserve_range=True, anti_aliasing=False)
+            win_slice = ((win_slice - w_lo) / (w_hi - w_lo)).astype(np.float32)
+            if use_resample:
+                win_slice = crop_or_pad_to_grid(win_slice, GRID_ROWS, GRID_COLS, center, fill_value=0.0)
+            img_slice = np.stack([img_slice, win_slice])  # (2, H, W); without --window the file stays (H, W) as before
+
         filename_stem = f"{id_}_{idz:04d}"
+        if use_resample:
+            cropCenters[filename_stem] = center
 
         # Image saved losslessly as .npy
         np.save(str(img_save_path / f"{filename_stem}.npy"), img_slice)
@@ -241,7 +322,10 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             warnings.filterwarnings("ignore", category=UserWarning)
             imsave(str(gt_save_path / f"{filename_stem}.png"), gt_slice)
 
-    return dx, dy, dz
+        if use_distmap:
+            np.save(str(distSavePath / f"{filename_stem}.npy"), distSlice.astype(np.float16))
+
+    return (dx, dy, dz), cropCenters
 
 
 def get_splits(src_path: Path, retains: int, fold: int) -> tuple[list[str], list[str], list[str]]:
@@ -286,14 +370,10 @@ def main(args: argparse.Namespace):
     else:
         clip_range = None
 
-    air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
-
     if args.normalize:
         # Pass one over data: Compute dataset normalization stats from training data only (avoid data leakage)
         print(">> Computing normalization statistics over the training set...")
-        mean, std = compute_global_stats(training_ids, src_path, clip_range,
-                                         args.resample, args.crop, air_value,
-                                         tuple(args.shape))
+        mean, std = compute_global_stats(training_ids, src_path, clip_range, args.resample, tuple(args.shape))
         print(f">> mean={mean:.3f}, std={std:.3f}")
     else:
         mean, std = None, None
@@ -303,16 +383,29 @@ def main(args: argparse.Namespace):
     # slice_patient(), so padding represents actual air in the same normalized space the network sees, rather than an arbitrary value.
     # Air floor is CLIP_MIN if clipping is on for this run, otherwise the dataset's raw HU floor (RAW_AIR_FLOOR). 
     # If normalizing, that air value also needs to go through the same z-score transform real pixels get; if not, it's used exactly as-is.
-    
+    air_value = clip_range[0] if args.clip else RAW_AIR_FLOOR
     pad_fill_value = (air_value - mean) / std if args.normalize else air_value
+
+    # Soft-tissue window for the optional second channel: cutoffs from the training patients only (avoid data leakage)
+    if args.window:
+        print(">> Computing the soft-tissue window over the training set...")
+        window_range = compute_window_range(training_ids, src_path, args.window_class, *args.window_pct)
+        print(f">> window = [{window_range[0]:.1f}, {window_range[1]:.1f}] HU "
+              f"(percentiles {args.window_pct[0]:g}/{args.window_pct[1]:g} of class {args.window_class})")
+    else:
+        window_range = None
 
     # Save stats for future efficiency
     dest_path.mkdir(parents=True, exist_ok=True)
     with open(dest_path / "normalization_stats.json", "w") as f:
-        json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value}, f, indent=2)
+        # pad_fill_values has one entry per input channel (the window channel is scaled to [0, 1] with air at 0); the dataset's
+        # rotation/translation augmentation uses it to fill empty corners per channel.
+        json.dump({"mean": mean, "std": std, "pad_fill_value": pad_fill_value, "window_range": window_range,
+                   "pad_fill_values": [pad_fill_value] + ([0.0] if window_range else [])}, f, indent=2)
         print(f"Saved normalization stats to {f.name}")
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
+    cropCenters = {}
 
     split_ids: list[str]
     for mode, split_ids in zip(["train", "val"], [training_ids, validation_ids]):
@@ -326,28 +419,34 @@ def main(args: argparse.Namespace):
                                  shape=tuple(args.shape),
                                  clip_range=clip_range,
                                  use_resample=args.resample,
-                                 use_crop=args.crop,
                                  use_normalize=args.normalize,
                                  mean=mean,
                                  std=std,
                                  pad_fill_value=pad_fill_value,
+                                 use_distmap=args.distmap,
+                                 window_range=window_range,
                                  test_mode=mode == 'test')
-        resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
         match args.process:
             case 1:
-                resolutions = list(map(pfun, iterator))
+                results = list(map(pfun, iterator))
             case -1:
-                resolutions = Pool().map(pfun, iterator)
+                results = Pool().map(pfun, iterator)
             case _ as p:
-                resolutions = Pool(p).map(pfun, iterator)
+                results = Pool(p).map(pfun, iterator)
 
-        for key, val in zip(split_ids, resolutions):
-            resolution_dict[key] = val
+        for key, (resolution, centers) in zip(split_ids, results):
+            resolution_dict[key] = resolution
+            cropCenters.update(centers)
 
     with open(dest_path / "spacing.pkl", 'wb') as f:
         pickle.dump(resolution_dict, f, pickle.HIGHEST_PROTOCOL)
         print(f"Saved spacing dictionnary to {f}")
+
+    if args.resample:
+        with open(dest_path / "crop_centers.pkl", 'wb') as f:
+            pickle.dump(cropCenters, f, pickle.HIGHEST_PROTOCOL)
+            print(f"Saved crop centers to {f.name}")
 
 
 def get_args() -> argparse.Namespace:
@@ -366,14 +465,20 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--resample', action='store_true',
                         help="Resample to a common in-plane spacing, with anti-aliasing, followed by body-centroid crop/pad to a fixed grid."
                              "If not set, falls back to the original fixed-shape stretch resize.")
-    # ! newly added
-    parser.add_argument('--crop', action='store_true', default=False,
-                        help="body-centroid crop/pad to a fixed grid."
-                             "If not set, falls back to no cropping.")
-    # !
     parser.add_argument('--normalize', action='store_true',
                         help="Z-score normalize using training set mean/std.")
+    parser.add_argument('--distmap', action='store_true',
+                        help="Also save 3D signed distance maps (computed before resampling/cropping) for the boundary loss.")
+    parser.add_argument('--window', action='store_true',
+                        help="Add a second input channel: raw HU clipped to a narrow soft-tissue window and scaled to [0, 1]. "
+                             "Requires --window_pct. The saved image becomes (2, H, W).")
+    parser.add_argument('--window_pct', type=float, nargs=2, metavar=('LOW', 'HIGH'), default=None,
+                        help="Low/high percentile of the labeled voxels of --window_class that set the window cutoffs "
+                             "(see analyze_soft_tissue_window.py for the evidence).")
+    parser.add_argument('--window_class', type=int, default=1, help="Class whose HU values define the window (1 = esophagus).")
     args = parser.parse_args()
+    if args.window and args.window_pct is None:
+        parser.error("--window needs --window_pct LOW HIGH (e.g. --window_pct 2.5 99.5)")
     random.seed(args.seed)
 
     print(args)

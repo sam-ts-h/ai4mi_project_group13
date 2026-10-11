@@ -14,11 +14,15 @@ data/
 projects
 .DS_Store
 
-experiment_log_2.txt
-experiment_log.txt
-experiment_log_16kernels.txt
-experiment_512crop_no_aug_log.txt
-experiment_log_adamW.txt
+old/experiment_log_2.txt
+old/experiment_log.txt
+old/experiment_log_16kernels.txt
+old/experiment_512crop_no_aug_log.txt
+old/experiment_log_adamW.txt
+metrics3d_log.txt
+
+plot_metrics3d.py
+run_metrics3d.sh
 
 results/*
 splits/*
