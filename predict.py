@@ -7,9 +7,10 @@ from dataset import SliceDataset, infer_in_channels
 from utils import probs2class, save_images, tqdm_
 
 # val part of main.py but on test, no gt
-dataset = "SEGTHOR_full_split42"
+dataset = "SEGTHOR_full_split43"
 dataDir = f"./data/{dataset}"
-runDir = Path("./experiments/final_ceDiceBoundary_200ep_16kernels/split42_seed0/ceDiceBoundary")
+runDir = Path("./final/seed43")
+#runDir = Path("./experiments/final_ceDiceBoundary_200ep_16kernels/split42_seed0/ceDiceBoundary")
 predDir = runDir / "test"
 device = torch.device("cpu")
 if torch.cuda.is_available():
@@ -27,7 +28,7 @@ net.to(device)
 net.eval()
 
 testSet = SliceDataset('test', dataDir, img_transform=img_transform, augmentation="none")
-testLoader = DataLoader(testSet, batch_size=params['B'], num_workers=12, shuffle=False)
+testLoader = DataLoader(testSet, batch_size=params['B'], num_workers=0, shuffle=False)
 
 with torch.no_grad():
     for data in tqdm_(testLoader):
