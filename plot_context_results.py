@@ -29,7 +29,6 @@ def read_history(path: Path, kind: str) -> np.ndarray:
         raise FileNotFoundError(f"Missing {path}. Check whether rsync copied this file.")
     arr = np.asarray(np.load(path, allow_pickle=False), dtype=float)
     if kind == "loss":
-        # Some training scripts store a value for every batch within each epoch.
         if arr.ndim == 2 and arr.shape[1] > 1:
             arr = arr.mean(axis=1)
         else:
@@ -39,13 +38,9 @@ def read_history(path: Path, kind: str) -> np.ndarray:
     else:
         if arr.ndim == 1:
             raise ValueError(
-                f"{path} has shape {arr.shape}: per-organ Dice is unavailable. "
-                "Please share the output of: python -c 'import numpy as np; "
                 f"print(np.load(\"{path}\").shape)'"
             )
         if arr.ndim == 3:
-            # Your files: [epochs, slices, classes]. Keep each epoch separate;
-            # the plotted Dice is the arithmetic mean of the stored slice scores.
             if arr.shape[-1] not in (4, 5):
                 raise ValueError(f"Expected classes on the last axis in {path}; shape={arr.shape}")
             arr = arr.mean(axis=1)
@@ -54,13 +49,13 @@ def read_history(path: Path, kind: str) -> np.ndarray:
         if arr.shape[1] not in (4, 5) and arr.shape[0] in (4, 5):
             arr = arr.T
         if arr.shape[1] == 5:
-            arr = arr[:, 1:]  # SEGTHOR: background, esophagus, heart, trachea, aorta
+            arr = arr[:, 1:]  # background, esophagus, heart, trachea, aorta
         elif arr.shape[1] != 4:
             raise ValueError(f"Expected 4 organs or background + 4 organs in {path}; shape={arr.shape}")
     if arr.shape[0] == 0:
         raise ValueError(f"Empty history: {path}")
     if not np.isfinite(arr).all():
-        raise ValueError(f"Non-finite values in {path}; inspect the training run.")
+        raise ValueError(f"Non-finite values in {path};")
     if kind == "dice" and (np.any(arr < -1e-6) or np.any(arr > 1 + 1e-6)):
         raise ValueError(f"Dice values outside [0, 1] in {path}; inspect class order/shape.")
     return arr
@@ -72,7 +67,7 @@ def load_results(root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     for split in SPLITS:
         split_dir = root / split
         if not split_dir.is_dir():
-            raise FileNotFoundError(f"Missing {split_dir}; use --results to point to its parent.")
+            raise FileNotFoundError(f"Missing {split_dir};")
         for prefix, experiment in EXPERIMENTS.items():
             matches = [split_dir / prefix]
             if not matches[0].is_dir():
@@ -88,8 +83,8 @@ def load_results(root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
             if len(lengths) != 1:
                 raise ValueError(f"Unequal history lengths in {folder}: {sorted(lengths)}")
 
-            overall = dice_val.mean(axis=1)  # macro average, excluding background
-            best = int(np.argmax(overall))  # choose once, then report all organs at this epoch
+            overall = dice_val.mean(axis=1) 
+            best = int(np.argmax(overall))
             best_rows.append({
                 "split_train_seed": split, "experiment": experiment,
                 "best_epoch": best + 1, "overall_dice": overall[best],
@@ -122,19 +117,16 @@ def curve(ax, data: pd.DataFrame, metric: str, ylabel: str, title: str,
     ax.set(title=title, xlabel="Epoch", ylabel=ylabel)
     ax.grid(alpha=0.2)
 
-
 def save_figure(fig, path: Path) -> None:
     fig.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {path}")
-
 
 def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     sns.set_theme(style="whitegrid", context="notebook", font_scale=1.08)
     out.mkdir(parents=True, exist_ok=True)
     histories.to_csv(out / "epoch_metrics.csv", index=False)
     best.to_csv(out / "best_epoch_per_run.csv", index=False)
-
     metrics = ["overall_dice", *ORGANS]
     base = best[best.experiment == "Baseline"].set_index("split_train_seed")
     deltas = best.copy()
@@ -142,7 +134,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
         deltas[f"delta_{metric}"] = deltas.apply(
             lambda row: row[metric] - base.loc[row.split_train_seed, metric], axis=1)
     deltas.to_csv(out / "paired_baseline_differences.csv", index=False)
-
     fig, ax = plt.subplots(figsize=(10, 5.5))
     seed_colors = sns.color_palette("colorblind", n_colors=3)
     offsets = (-0.17, 0, 0.17)
@@ -165,7 +156,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     ax.legend(title="Split / train seed", bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False)
     fig.tight_layout()
     save_figure(fig, out / "01_best_dice_overview.png")
-
     difference = (deltas[deltas.experiment != "Baseline"]
                   .groupby("experiment")[[f"delta_{m}" for m in metrics]]
                   .mean().reindex(ORDER[1:]))
@@ -182,7 +172,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     ax.tick_params(axis="y", labelrotation=0)
     fig.tight_layout()
     save_figure(fig, out / "02_paired_differences.png")
-
     winner = best[best.experiment != "Baseline"].groupby("experiment")["overall_dice"].mean().idxmax()
     chosen = ("Baseline", winner)
     fig, axes = plt.subplots(2, 3, figsize=(15, 7.5), sharex=True)
@@ -207,7 +196,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     fig.suptitle(f"Loss from epoch 3: context=1 (2D) versus {winner} | mean ± SD")
     fig.tight_layout(rect=(0, 0.08, 1, 0.95))
     save_figure(fig, out / "04_loss_learning_curves.png")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
