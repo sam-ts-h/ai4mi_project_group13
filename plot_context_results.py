@@ -110,7 +110,6 @@ def load_results(root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def curve(ax, data: pd.DataFrame, metric: str, ylabel: str, title: str,
           chosen: tuple[str, ...]) -> None:
-    """Show only mean and run-to-run SD for the selected methods."""
     for experiment in chosen:
         subset = data[data.experiment == experiment]
         stats = subset.groupby("epoch")[metric].agg(["mean", "std", "count"])
@@ -144,7 +143,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
             lambda row: row[metric] - base.loc[row.split_train_seed, metric], axis=1)
     deltas.to_csv(out / "paired_baseline_differences.csv", index=False)
 
-    # Overview: each seed pair gets a dot. Mean and sample SD are black.
     fig, ax = plt.subplots(figsize=(10, 5.5))
     seed_colors = sns.color_palette("colorblind", n_colors=3)
     offsets = (-0.17, 0, 0.17)
@@ -168,7 +166,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     fig.tight_layout()
     save_figure(fig, out / "01_best_dice_overview.png")
 
-    # Paired comparison removes the shared difficulty of each split.
     difference = (deltas[deltas.experiment != "Baseline"]
                   .groupby("experiment")[[f"delta_{m}" for m in metrics]]
                   .mean().reindex(ORDER[1:]))
@@ -186,7 +183,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     fig.tight_layout()
     save_figure(fig, out / "02_paired_differences.png")
 
-    # The complete 15-run histories remain in CSV; show two lines per chart.
     winner = best[best.experiment != "Baseline"].groupby("experiment")["overall_dice"].mean().idxmax()
     chosen = ("Baseline", winner)
     fig, axes = plt.subplots(2, 3, figsize=(15, 7.5), sharex=True)
@@ -201,7 +197,6 @@ def make_plots(histories: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     fig.tight_layout(rect=(0, 0.04, 1, 0.97))
     save_figure(fig, out / "03_dice_learning_curves.png")
 
-    # Epoch 1 has a large loss spike; show epochs 3+ so later changes are visible.
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
     later = histories[histories.epoch >= 3]
     for ax, metric, title in zip(axes, ("val_loss", "train_loss"),
