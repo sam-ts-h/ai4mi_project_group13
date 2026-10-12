@@ -4,11 +4,11 @@
 
 Our final configuration:
 * Preprocessing: [0.5, 99.5] percentile HU value clipping, xy resampling to 1 mm, body-centered cropping to 512 x 352 mm, z-normalization, 2nd window with [10, 99.5] HU clipping
-* Augmentation: roration (), translation (), scaling () with application probability of 0.5
+* Augmentation: roration (how much?), translation (how much?), scaling (how much?) with application probability of 0.5
 * Architecture: standard 2D ENet with 16 kernels and factor 2
 * Training parameters: batch-size 8, learning rate: 5e-4, Adam (betas: 0.99, 0.999)
 * Loss: CE (all classes) + DSC (only foreground) loss
-* Postprocessing: Small Components
+* Postprocessing: Small Components (min_vox=50, min_frac=0.01)
 
 Set-up:
 * export OMP_NUM_THREADS=1 and export MKL_NUM_THREADS=1 with workers=12
@@ -95,7 +95,7 @@ python stitch.py \
 
 for seed in 42 43 44; do
   python metrics.py \
-    --pred_folder results/final/seed${seed}/stitched \
+    --pred_folder /local/data/ipv577/projects/ai4mi_project_group13/results/final/seed${seed}/stitched \
     --gt_folder data/segthor/train \
     --dest_folder results/final/seed${seed}/metrics_pre_pp
 done
@@ -109,6 +109,12 @@ for seed in 42 43 44; do
     --min_voxels 50 --min_fraction 0.01
 done
 
+ONLY SEED 43:
+python postprocess_lcc.py --input_dir /local/data/ipv577/projects/ai4mi_project_group13/results/final/seed43/stitched --output_dir /local/data/ipv577/projects/ai4mi_project_group13/results/final/postprocess_lcc
+
+python postprocess_small_components.py --input_dir /local/data/ipv577/projects/ai4mi_project_group13/results/final/seed43/stitched --output_dir /local/data/ipv577/projects/ai4mi_project_group13/results/final/postprocess_sc --min_voxels 50 --min_fraction 0.01
+
+
 6) Advanced Metrics (post post-processing):
 
 for seed in 42 43 44; do
@@ -117,6 +123,12 @@ for seed in 42 43 44; do
     --gt_folder data/segthor/train \
     --dest_folder results/final/seed${seed}/metrics_post_pp
 done
+
+6.5) Plot post post-processing
+for seed in 42 43 44; do
+  python plot_metrics3d.py \
+    --
+
 
 ## inference pipeline
 
