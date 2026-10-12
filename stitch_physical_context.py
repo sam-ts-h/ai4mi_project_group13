@@ -1,7 +1,6 @@
 import argparse
 import re
 from pathlib import Path
-
 import nibabel as nib
 import numpy as np
 from PIL import Image
@@ -12,8 +11,6 @@ TARGET_XY_MM = 1.0
 TARGET_Z_MM = 2.5
 GRID_SHAPE = (512, 512)
 LABEL_VALUES = {0, 63, 126, 189, 252}
-
-
 def resampled_xy_shape(shape, spacing):
     #match the original preprocessing implementation
     dx, dy = spacing[:2]
@@ -21,8 +18,7 @@ def resampled_xy_shape(shape, spacing):
         max(1, int(round(shape[0] * dy / TARGET_XY_MM))),
         max(1, int(round(shape[1] * dx / TARGET_XY_MM))),
     )
-
-
+    
 def undo_centered_crop(pred, shape):
     #Invert crop_or_pad_to_grid 
     rows, cols = shape
@@ -55,7 +51,6 @@ def reconstruct_patient(patient, paths, gt_folder, output_folder, resample_z):
     indexes = set(paths)
     if indexes != set(range(expected_z)):
         raise ValueError(
-            f'{patient}: expected slices 0..{expected_z - 1}, '
             f'found {len(indexes)}; missing={sorted(set(range(expected_z)) - indexes)[:10]}'
         )
 
@@ -89,8 +84,7 @@ def reconstruct_patient(patient, paths, gt_folder, output_folder, resample_z):
     output_folder.mkdir(parents=True, exist_ok=True)
     nib.save(result, str(output_folder / f'{patient}.nii.gz'))
     print(f'{patient}: {len(paths)} PNGs -> {pred_volume.shape}')
-
-
+    
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--data_folder', type=Path, required=True)
@@ -117,7 +111,6 @@ def main():
     print(f'Found {len(groups)} patients; resample_z={args.resample_z}')
     for patient, paths in sorted(groups.items()):
         reconstruct_patient(patient, paths, args.gt_folder, args.dest_folder, args.resample_z)
-
 
 if __name__ == '__main__':
     main()
