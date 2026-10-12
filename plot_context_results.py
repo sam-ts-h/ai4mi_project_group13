@@ -26,7 +26,7 @@ COLORS = dict(zip(ORDER, sns.color_palette("colorblind", n_colors=len(ORDER))))
 
 def read_history(path: Path, kind: str) -> np.ndarray:
     if not path.is_file():
-        raise FileNotFoundError(f"Missing {path}. Check whether rsync copied this file.")
+        raise FileNotFoundError(f"Missing {path}.")
     arr = np.asarray(np.load(path, allow_pickle=False), dtype=float)
     if kind == "loss":
         if arr.ndim == 2 and arr.shape[1] > 1:
@@ -38,8 +38,6 @@ def read_history(path: Path, kind: str) -> np.ndarray:
     else:
         if arr.ndim == 1:
             raise ValueError(
-                f"{path} has shape {arr.shape}: per-organ Dice is unavailable. "
-                "Please share the output of: python -c 'import numpy as np; "
                 f"print(np.load(\"{path}\").shape)'"
             )
         if arr.ndim == 3:
