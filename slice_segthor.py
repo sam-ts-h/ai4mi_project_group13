@@ -36,6 +36,7 @@ import numpy as np
 import nibabel as nib
 from skimage.io import imsave
 from skimage.transform import resize
+from scipy.ndimage import distance_transform_edt
 
 from utils import map_, tqdm_
 from preprocessing_common import (GRID_ROWS, GRID_COLS,
@@ -45,6 +46,8 @@ from preprocessing_common import (GRID_ROWS, GRID_COLS,
 # Raw HU floor when clipping is OFF for a given ablation run: not a design choice, it's just the dataset's own guaranteed floor.
 # Used only to define what "air" means for the padding fill value when --clip is not passed.
 RAW_AIR_FLOOR = -1000.0
+
+NUM_CLASSES: int = 5
 
 def clip_ct(img: np.ndarray, clip_min: float, clip_max: float) -> np.ndarray:
     """
@@ -165,7 +168,7 @@ def compute_global_stats(training_ids: list[str], source_path: Path,
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int], clip_range: tuple[float, float], use_resample: bool, 
-                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, test_mode: bool = False):
+                  use_normalize: bool, mean: float, std: float, pad_fill_value: float, use_distmap: bool = False, test_mode: bool = False):
     ct, gt, (dx, dy, dz) = load_patient_ct(id_, source_path, test_mode)
     z = ct.shape[2]
 
@@ -176,6 +179,24 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     gt_save_path: Path = Path(dest_path, "gt")
     img_save_path.mkdir(parents=True, exist_ok=True)
     gt_save_path.mkdir(parents=True, exist_ok=True)
+
+    # 3D signed distance maps on the raw gt, before any resampling or cropping. spacing in mm so the
+    # distances are real 3D mm and stay valid after resampling and croppin
+    if use_distmap:
+        distSavePath: Path = Path(dest_path, "distmap")
+        distSavePath.mkdir(parents=True, exist_ok=True)
+        distMaps = np.zeros((NUM_CLASSES, *gt.shape), dtype=np.float16)
+        for k in range(NUM_CLASSES):
+            mask = gt == k
+            # If no borders dont run code, errors
+            if mask.any() and not mask.all():
+                outside = ~mask
+                distOutside = distance_transform_edt(outside, sampling=(dx, dy, dz))
+                distInside = distance_transform_edt(mask, sampling=(dx, dy, dz))
+                distMaps[k] = distOutside * outside - distInside * mask
+
+    # stitch.py needs the crop center of every slice to put predictions back in the original scan
+    cropCenters = {}
 
     for idz in range(z):
         # Resample each slice to a common in-plane spacing. This is what makes the same real-world organ size occupy the same
@@ -192,6 +213,17 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
                             preserve_range=True, anti_aliasing=False).astype(gt[:, :, idz].dtype)
             
         assert img_slice.shape == gt_slice.shape
+
+        # distances are smooth so linear like the image, not nearest like the gt
+        if use_distmap:
+            distSlice = np.zeros((NUM_CLASSES, *gt_slice.shape), dtype=np.float32)
+            for k in range(NUM_CLASSES):
+                classSlice = distMaps[k, :, :, idz].astype(np.float32)
+                if use_resample:
+                    distSlice[k] = resample_image_slice(classSlice, (dx, dy))
+                else:
+                    distSlice[k] = resize(classSlice, shape, order=1, mode="constant",
+                                          preserve_range=True, anti_aliasing=False)
 
         if use_resample:
             # Crop/pad is only meaningful after resampling, since original fixed resize already produces same grid size
@@ -227,7 +259,22 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             assert img_slice.shape == (GRID_ROWS, GRID_COLS)
             assert gt_slice.shape == (GRID_ROWS, GRID_COLS)
 
+            # same center as the image so the distances stay on top of the gt.
+            # Padding is background far from every organ: so the max (furthest outside) for the organs,
+            # and the min (deepest inside) for the background class
+            if use_distmap:
+                croppedDist = np.zeros((NUM_CLASSES, GRID_ROWS, GRID_COLS), dtype=np.float32)
+                for k in range(NUM_CLASSES):
+                    if k == 0:
+                        fillValue = distSlice[k].min()
+                    else:
+                        fillValue = distSlice[k].max()
+                    croppedDist[k] = crop_or_pad_to_grid(distSlice[k], GRID_ROWS, GRID_COLS, center, fill_value=fillValue)
+                distSlice = croppedDist
+
         filename_stem = f"{id_}_{idz:04d}"
+        if use_resample:
+            cropCenters[filename_stem] = center
 
         # Image saved losslessly as .npy
         np.save(str(img_save_path / f"{filename_stem}.npy"), img_slice)
@@ -238,7 +285,10 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
             warnings.filterwarnings("ignore", category=UserWarning)
             imsave(str(gt_save_path / f"{filename_stem}.png"), gt_slice)
 
-    return dx, dy, dz
+        if use_distmap:
+            np.save(str(distSavePath / f"{filename_stem}.npy"), distSlice.astype(np.float16))
+
+    return (dx, dy, dz), cropCenters
 
 
 def get_splits(src_path: Path, retains: int, fold: int) -> tuple[list[str], list[str], list[str]]:
@@ -306,6 +356,7 @@ def main(args: argparse.Namespace):
         print(f"Saved normalization stats to {f.name}")
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
+    cropCenters = {}
 
     split_ids: list[str]
     for mode, split_ids in zip(["train", "val"], [training_ids, validation_ids]):
@@ -323,23 +374,29 @@ def main(args: argparse.Namespace):
                                  mean=mean,
                                  std=std,
                                  pad_fill_value=pad_fill_value,
+                                 use_distmap=args.distmap,
                                  test_mode=mode == 'test')
-        resolutions: list[tuple[float, float, float]]
         iterator = tqdm_(split_ids)
         match args.process:
             case 1:
-                resolutions = list(map(pfun, iterator))
+                results = list(map(pfun, iterator))
             case -1:
-                resolutions = Pool().map(pfun, iterator)
+                results = Pool().map(pfun, iterator)
             case _ as p:
-                resolutions = Pool(p).map(pfun, iterator)
+                results = Pool(p).map(pfun, iterator)
 
-        for key, val in zip(split_ids, resolutions):
-            resolution_dict[key] = val
+        for key, (resolution, centers) in zip(split_ids, results):
+            resolution_dict[key] = resolution
+            cropCenters.update(centers)
 
     with open(dest_path / "spacing.pkl", 'wb') as f:
         pickle.dump(resolution_dict, f, pickle.HIGHEST_PROTOCOL)
         print(f"Saved spacing dictionnary to {f}")
+
+    if args.resample:
+        with open(dest_path / "crop_centers.pkl", 'wb') as f:
+            pickle.dump(cropCenters, f, pickle.HIGHEST_PROTOCOL)
+            print(f"Saved crop centers to {f.name}")
 
 
 def get_args() -> argparse.Namespace:
@@ -360,6 +417,8 @@ def get_args() -> argparse.Namespace:
                              "If not set, falls back to the original fixed-shape stretch resize.")
     parser.add_argument('--normalize', action='store_true',
                         help="Z-score normalize using training set mean/std.")
+    parser.add_argument('--distmap', action='store_true',
+                        help="Also save 3D signed distance maps (computed before resampling/cropping) for the boundary loss.")
     args = parser.parse_args()
     random.seed(args.seed)
 
