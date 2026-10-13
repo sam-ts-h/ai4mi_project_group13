@@ -93,7 +93,7 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
 
         res_arr[:, :, z] = resized[...]
 
-    # ! change here since we already decoded above.
+    # ! change here since we already decoded above; this is the main difference between branch from me (jonathan) and sam
     assert set(np.unique(res_arr)) <= set(range(K)), np.unique(res_arr)
     assert orig_shape == res_arr.shape, (orig_shape, res_arr.shape)
 
