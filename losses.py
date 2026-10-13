@@ -23,15 +23,19 @@
 # SOFTWARE.
 
 
+import torch
 from torch import einsum
 
 from utils import simplex, sset
+SMOOTH = 1e-8
 
 
 class CrossEntropy():
     def __init__(self, **kwargs):
         # Self.idk is used to filter out some classes of the target mask. Use fancy indexing
         self.idk = kwargs['idk']
+        # weight for ce weighted, calc before
+        self.weights = kwargs.get('weights')
         print(f"Initialized {self.__class__.__name__} with {kwargs}")
 
     def __call__(self, pred_softmax, weak_target):
@@ -42,6 +46,11 @@ class CrossEntropy():
         log_p = (pred_softmax[:, self.idk, ...] + 1e-10).log()
         mask = weak_target[:, self.idk, ...].float()
 
+        #each pixel gets the weight of its class
+        if self.weights is not None:
+            w = torch.tensor(self.weights, dtype=torch.float32, device=mask.device)[self.idk]
+            mask = mask * w[None, :, None, None]
+
         loss = - einsum("bkwh,bkwh->", mask, log_p)
         loss /= mask.sum() + 1e-10
 
@@ -51,3 +60,108 @@ class CrossEntropy():
 class PartialCrossEntropy(CrossEntropy):
     def __init__(self, **kwargs):
         super().__init__(idk=[1], **kwargs)
+
+
+class DiceLoss():
+    def __init__(self, **kwargs):
+        self.idk = kwargs['idk']
+        print(f"Initialized {self.__class__.__name__} with {kwargs}")
+
+    def __call__(self, predSoftmax, target):
+        assert predSoftmax.shape == target.shape
+        assert simplex(predSoftmax)
+        assert sset(target, [0, 1])
+
+        pred = predSoftmax[:, self.idk, ...]
+        mask = target[:, self.idk, ...].float()
+
+        #axes to sum away (batch,w,h )keeps axis 1 so we get one number per class
+        sumDims = (0, 2, 3)
+
+        intersection = (pred * mask).sum(dim=sumDims)
+        predSum = pred.sum(dim=sumDims)
+        maskSum = mask.sum(dim=sumDims)
+
+        dice = (2 * intersection + SMOOTH) / (predSum + maskSum + SMOOTH)
+
+        return 1 - dice.mean()
+
+
+class TverskyLoss():
+    def __init__(self, **kwargs):
+        self.idk = kwargs['idk']
+        # alpha weighs fp beta weighs fn thuss alpha = beta = 0.5 is dice
+        self.alpha = kwargs.get('alpha', 0.5)
+        self.beta = kwargs.get('beta', 0.5)
+        # gamma > 1 makes it focal the worst organ gets taking into account
+        self.gamma = kwargs.get('gamma', 1)
+
+    def __call__(self, predSoftmax, target):
+        assert predSoftmax.shape == target.shape
+        assert simplex(predSoftmax)
+        assert sset(target, [0, 1])
+
+        pred = predSoftmax[:, self.idk, ...]
+        mask = target[:, self.idk, ...].float()
+        
+        #axes to sum away (batch,w,h )keeps axis 1 so we get one number per class
+        sumDims = (0, 2, 3)
+
+        tp = (pred * mask).sum(dim=sumDims)
+        fp = (pred * (1 - mask)).sum(dim=sumDims)
+        fn = ((1 - pred) * mask).sum(dim=sumDims)
+
+        tversky = (tp + SMOOTH) / (tp + self.alpha * fp + self.beta * fn + SMOOTH)
+
+        #power per organ before the mean for focal effect
+        return ((1 - tversky) ** self.gamma).mean()
+
+
+class BoundaryLoss():
+    def __init__(self, **kwargs):
+        self.idk = kwargs['idk']
+        print(f"Initialized {self.__class__.__name__} with {kwargs}")
+
+    def __call__(self, predSoftmax, distMaps):
+        assert predSoftmax.shape == distMaps.shape
+        assert simplex(predSoftmax)
+
+        pred = predSoftmax[:, self.idk, ...]
+        dist = distMaps[:, self.idk, ...].float()
+
+        # we do the pred times the distance, might be below zero but thats fine
+        return (pred * dist).mean()
+
+
+class CombinedLoss():
+    def __init__(self, ce, dice=None, boundary=None, alpha=0.0):
+        self.ce = ce
+        self.dice = dice
+        self.boundary = boundary
+        self.alpha = alpha
+
+    def partNames(self) -> list[str]:
+        #just easy helper for the names in the loss dict
+        names = ['ce']
+        if self.dice is not None:
+            names.append('dice')
+        if self.boundary is not None:
+            names.append('boundary')
+
+        return names
+
+    def __call__(self, predSoftmax, target, distMaps=None):
+        parts = {'ce': self.ce(predSoftmax, target)}
+        total = parts['ce']
+
+        if self.dice is not None:
+            parts['dice'] = self.dice(predSoftmax, target)
+            total = total + parts['dice']
+
+        if self.boundary is not None:
+            assert distMaps is not None
+            parts['boundary'] = self.boundary(predSoftmax, distMaps)
+            #rebalance: region terms fade as boundary rises, so total stays comparable
+            total = (1 - self.alpha) * total + self.alpha * parts['boundary']
+
+        return total, parts

@@ -184,7 +184,8 @@ class ENet(nn.Module):
                 #                          conv_block)
 
                 # Initial operations
-                self.conv0 = nn.Conv2d(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
+                #self.conv0 = nn.Conv2d(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
+                self.conv0 = nn.Conv2d(in_dim, K - in_dim, kernel_size=3, stride=2, padding=1)  
                 self.maxpool0 = nn.MaxPool2d(2, return_indices=False, ceil_mode=False)
 
                 # Downsampling half
@@ -252,3 +253,39 @@ class ENet(nn.Module):
 
         def init_weights(self, *args, **kwargs):
                 self.apply(random_weights_init)
+
+class ENetFullRes(ENet):
+        def __init__(self, in_dim: int, out_dim: int, **kwargs):
+                super().__init__(in_dim, out_dim, **kwargs)
+                factor: int = kwargs["factor"] if "factor" in kwargs else 4
+                K: int = kwargs["kernels"] if "kernels" in kwargs else 16
+
+                # Full-resolution stem: only used as the last skip connection
+                self.stem = nn.Sequential(conv_block(in_dim, K, kernel_size=3, padding=1),
+                                          conv_block(K, K, kernel_size=3, padding=1))
+                # Extra residual blocks at 1/2 resolution, before the first downsampling
+                self.bottleneck0 = nn.Sequential(BottleNeck(K, K, factor),
+                                                 BottleNeck(K, K, factor))
+                # Final convs now see [upsampled decoder features, full-res stem features]
+                self.final = nn.Sequential(conv_block(2 * K, K, kernel_size=3, padding=1, bias=False),
+                                           conv_block(K, K, kernel_size=3, padding=1, bias=False),
+                                           nn.Conv2d(K, out_dim, kernel_size=1))
+
+        def forward(self, input):
+                feat0 = self.stem(input)                                    # (B, K, H, W)
+
+                conv_0 = self.conv0(input)
+                maxpool_0 = self.maxpool0(input)
+                out0 = self.bottleneck0(torch.cat((conv_0, maxpool_0), dim=1))   # (B, K, H/2, W/2)
+
+                bn1_0, indices_1 = self.bottleneck1_0(out0)
+                bn1_out = self.bottleneck1_1(bn1_0)
+                bn2_0, indices_2 = self.bottleneck2_0(bn1_out)
+                bn2_out = self.bottleneck2_1(bn2_0)
+                bn3_out = self.bottleneck3(bn2_out)
+
+                bn4_out = self.bottleneck4((bn3_out, indices_2, bn1_out))
+                bn5_out = self.bottleneck5((bn4_out, indices_1, out0))      # skip = processed H/2 features
+
+                up = F.interpolate(bn5_out, scale_factor=2, mode="bilinear", align_corners=False)
+                return self.final(torch.cat((up, feat0), dim=1))

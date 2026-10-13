@@ -21,9 +21,10 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+from PIL import Image
 import argparse
 import warnings
+import random
 from typing import Any
 from pathlib import Path
 from pprint import pprint
@@ -37,11 +38,11 @@ from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from functools import partial 
+from functools import partial
 
-from dataset import SliceDataset
+from dataset import SliceDataset, infer_in_channels
 from ShallowNet import shallowCNN
-from ENet import ENet
+from ENet import ENet, ENetFullRes
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -50,19 +51,32 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy)
+from losses import (CrossEntropy,DiceLoss,TverskyLoss,BoundaryLoss,CombinedLoss)
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
 # Avoids the classes with C (often used for the number of Channel)
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
-datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
-datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'scored': 4, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_corrected16"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_fullres"] = {'K': 5, 'net': ENetFullRes, 'B': 8, 'kernels': 8, 'factor': 2}
+for split_seed in (42, 43, 44):
+    datasets_params[f"SEGTHOR_full_split{split_seed}"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 16, 'factor': 2}
+
 
 def img_transform(img):
-        img = img.convert('L')
-        img = np.array(img)[np.newaxis, ...]
-        img = img / 255  # max <= 1
+        ''' img is a np array loaded in dataset.py: either raw, clipped HU float32 values 
+         (the new pipeline; see slice_segthor.py's clip_ct()) or uint8 0-255 values 
+         (for TOY2, still produced by gen_two_circles.py as PNG).
+         Branch on dtype rather than hardcoding per-dataset:
+           - float input (SEGTHOR): already a real, meaningful physical value (clipped HU) pass through as-is, no rescale.
+           - uint8 input (TOY2): rescale to [0, 1] as before.'''
+        img = img[np.newaxis, ...]
+        if img.dtype == np.uint8:
+            img = img.astype(np.float32) / 255
+        else:
+            img = img.astype(np.float32)
         img = torch.tensor(img, dtype=torch.float32)
         return img
 
@@ -78,15 +92,39 @@ def gt_transform(K, img):
         return img[0]
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
+
     # Networks and scheduler
-    gpu: bool = args.gpu and torch.cuda.is_available()
-    device = torch.device("cuda") if gpu else torch.device("cpu")
+    gpu: bool = args.gpu and (torch.cuda.is_available() or torch.backends.mps.is_available())
+    if gpu:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    
     print(f">> Picked {device} to run experiments")
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(args.seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    root_dir = Path("data") / (args.data_dir if args.data_dir else args.dataset)
 
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    #net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    net = datasets_params[args.dataset]['net'](infer_in_channels(root_dir), K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
@@ -95,28 +133,36 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / args.dataset
 
+    # Can skip loading if not distance based metric
+    loadDistMaps: bool = args.loss == 'ceDiceBoundary'
 
-
+    
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
-                             debug=args.debug)
+                             augmentation = args.augmentation,
+                             augmentation_probability=args.augmentation_probability,
+                             debug=args.debug,
+                             loadDistMaps=loadDistMaps)
     train_loader = DataLoader(train_set,
                               batch_size=B,
-                              num_workers=5,
+                              num_workers=12,
+                              persistent_workers=True,
                               shuffle=True)
 
     val_set = SliceDataset('val',
                            root_dir,
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
-                           debug=args.debug)
+                           augmentation="none", augmentation_probability=1.0,
+                           debug=args.debug,
+                           loadDistMaps=loadDistMaps)
     val_loader = DataLoader(val_set,
                             batch_size=B,
-                            num_workers=5,
+                            num_workers=12,
+                            persistent_workers=True,
                             shuffle=False)
 
     args.dest.mkdir(parents=True, exist_ok=True)
@@ -125,25 +171,80 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 def runTraining(args):
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed) 
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
+    # falls back to K for datasets where every class has data
+    scoredClasses: int = datasets_params[args.dataset].get('scored', K)
+    print(f"using augmentation {args.augmentation} with probability {args.augmentation_probability}")
+
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
+        ceIdk = list(range(K))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
-        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
+        ceIdk = [0, 1, 3, 4]  # Do not supervise the heart (class 2)
     else:
         raise ValueError(args.mode, args.dataset)
 
+    # background not handy for dice and dist metric so we dont look at it...
+    foregroundIdk = list(range(1, K))
+
+    ceWeights = None
+    if args.loss == 'ceWDice':
+        #1/sqrt of the pixel share per class
+        gtDir = Path("data") / (args.data_dir if args.data_dir else args.dataset) / "train" / "gt"
+        classCounts = np.zeros(K)
+        for gtPath in sorted(gtDir.glob("*.png")):
+            #copy so same as in gt_transform
+            gt = np.array(Image.open(gtPath)) // 63
+            for k in range(K):
+                classCounts[k] += (gt == k).sum()
+        classShare = classCounts / classCounts.sum()
+        ceWeights = (1 / np.sqrt(classShare)).tolist()
+        print(f"!!!!CE class weights: {[round(w, 2) for w in ceWeights]}")
+        with open(args.dest / "ceWeights.txt", 'w') as f:
+            #just for pp else maube remove?
+            f.write(f"share {classShare.tolist()}\nweights {ceWeights}\n")
+
+    ce = CrossEntropy(idk=ceIdk, weights=ceWeights)
+    if args.loss in ['ceDice', 'ceDiceBoundary', 'ceWDice']:
+        dice = DiceLoss(idk=foregroundIdk)
+    elif args.loss == 'ceFocalDice':
+        dice = TverskyLoss(idk=foregroundIdk, alpha=0.5, beta=0.5, gamma=2)
+    elif args.loss == 'ceFocalTversky':
+        # mild push on fn (0.4fp,0.6fn)
+        dice = TverskyLoss(idk=foregroundIdk, alpha=0.4, beta=0.6, gamma=2)
+    else:
+        dice = None
+    boundary = BoundaryLoss(idk=foregroundIdk) if args.loss == 'ceDiceBoundary' else None
+    loss_fn = CombinedLoss(ce, dice, boundary)
     # Notice one has the length of the _loader_, and the other one of the _dataset_
     log_loss_tra: Tensor = torch.zeros((args.epochs, len(train_loader)))
     log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
 
+    # Each term of the loss logged on its own, so the curves can be read apart afterwards
+    logPartsTra = {}
+    logPartsVal = {}
+    for name in loss_fn.partNames():
+        logPartsTra[name] = torch.zeros((args.epochs, len(train_loader)))
+        logPartsVal[name] = torch.zeros((args.epochs, len(val_loader)))
+
     best_dice: float = 0
 
     for e in range(args.epochs):
+        # 
+        if boundary is not None:
+            #paper: start at 0.01 and add 0.01 each epoch, capped so the region terms never hit 0
+            loss_fn.alpha = min(0.01 + 0.01 * e, 0.99)
+            print(f"Epoch {e}: BOUNDARY alpha = {loss_fn.alpha:.2f}")
+
         for m in ['train', 'val']:
             match m:
                 case 'train':
@@ -154,6 +255,7 @@ def runTraining(args):
                     loader = train_loader
                     log_loss = log_loss_tra
                     log_dice = log_dice_tra
+                    logParts = logPartsTra
                 case 'val':
                     net.eval()
                     opt = None
@@ -162,6 +264,8 @@ def runTraining(args):
                     loader = val_loader
                     log_loss = log_loss_val
                     log_dice = log_dice_val
+                    #important so the functions can update...
+                    logParts = logPartsVal
 
             with cm():  # Either dummy context manager, or the torch.no_grad for validation
                 j = 0
@@ -169,12 +273,16 @@ def runTraining(args):
                 for i, data in tq_iter:
                     img = data['images'].to(device)
                     gt = data['gts'].to(device)
+                    distMaps = data['distMaps'].to(device) if 'distMaps' in data else None
 
                     if opt:  # So only for training
                         opt.zero_grad()
 
-                    # Sanity tests to see we loaded and encoded the data correctly
-                    assert 0 <= img.min() and img.max() <= 1
+                    # Sanity check: no NaN/inf snuck through preprocessing.
+                    # Note that the old assert 0 <= img.min() and img.max() <= 1
+                    # assumed every dataset was rescaled to [0, 1], which is  no longer true now that SEGTHOR feeds raw, 
+                    # HU values here.
+                    assert torch.isfinite(img).all()
                     B, _, W, H = img.shape
 
                     pred_logits = net(img)
@@ -184,8 +292,10 @@ def runTraining(args):
                     pred_seg = probs2one_hot(pred_probs)
                     log_dice[e, j:j + B, :] = dice_coef(pred_seg, gt)  # One DSC value per sample and per class
 
-                    loss = loss_fn(pred_probs, gt)
+                    loss, parts = loss_fn(pred_probs, gt, distMaps)
                     log_loss[e, i] = loss.item()  # One loss value per batch (averaged in the loss)
+                    for name, value in parts.items():
+                        logParts[name][e, i] = value.item()
 
                     if opt:  # Only for training
                         loss.backward()
@@ -202,11 +312,14 @@ def runTraining(args):
 
                     j += B  # Keep in mind that _in theory_, each batch might have a different size
                     # For the DSC average: do not take the background class (0) into account:
-                    postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:].mean():05.3f}",
+                    postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:scoredClasses].mean():05.3f}",
                                                     "Loss": f"{log_loss[e, :i + 1].mean():5.2e}"}
                     if K > 2:
-                        postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
-                                         for k in range(1, K)}
+                        for k in range(1, scoredClasses):
+                            postfix_dict[f"Dice-{k}"] = f"{log_dice[e, :j, k].mean():05.3f}"
+                    if len(logParts) > 1:
+                        for name, values in logParts.items():
+                            postfix_dict[name] = f"{values[e, :i + 1].mean():5.2e}"
                     tq_iter.set_postfix(postfix_dict)
 
         # I save it at each epochs, in case the code crashes or I decide to stop it early
@@ -215,7 +328,11 @@ def runTraining(args):
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
 
-        current_dice: float = log_dice_val[e, :, 1:].mean().item()
+        for name in loss_fn.partNames():
+            np.save(args.dest / f"loss_{name}_tra.npy", logPartsTra[name])
+            np.save(args.dest / f"loss_{name}_val.npy", logPartsVal[name])
+
+        current_dice: float = log_dice_val[e, :, 1:scoredClasses].mean().item()
         if current_dice > best_dice:
             message = f">>> Improved dice at epoch {e}: {best_dice:05.3f}->{current_dice:05.3f} DSC"
             print(message)
@@ -235,9 +352,17 @@ def runTraining(args):
 def main():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--seed', default=0, type=int, help = "Seed for random weight init and data shuffling.")
     parser.add_argument('--epochs', default=20, type=int)
-    parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
+    parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys(),
+                        help="Which network/K/batch-size config to use.")
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help="Optional: folder name under data/ to actually read from, if it "
+                             "differs from --dataset (e.g. one of the ablation folders like "
+                             "SEGTHOR_clip). Config (K, network, batch size) still comes from "
+                             "--dataset, e.g. --dataset SEGTHOR --data_dir SEGTHOR_clip.")
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ceDice', 'ceDiceBoundary', 'ceWDice', 'ceFocalDice', 'ceFocalTversky'])
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
@@ -245,11 +370,26 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument('--augmentation', default='combination_no_noise', choices=[
+        'none',
+        'rotation',
+        'translation',
+        'scaling',
+        'noise',
+        'combination',
+        'combination_no_noise',
+    ], help="Data augmentation applied to the training images.")
+
+    parser.add_argument('--augmentation-probability', default=0.5, type=float,
+        help=(
+            "Probability of applying the selected augmentation. "
+            "For combination, this probability is applied independently "
+            "to rotation, translation, and scaling."
+        )
+    )
 
     args = parser.parse_args()
-
     pprint(args)
-
     runTraining(args)
 
 
