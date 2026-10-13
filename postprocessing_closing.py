@@ -24,7 +24,8 @@ def apply_closing(prediction, radius=1):
         closed = binary_closing(padded, structure=kernel)
         closed = closed[radius:-radius,radius:-radius,radius:-radius]
 
-        #Only add voxels that were background, we dont want to overwrite other organs!!
+        #only add voxels that were background
+        #we dont want to overwrite other organs!!
         new_voxels = closed & (result == 0)
         result[new_voxels] = organ
 
@@ -49,11 +50,7 @@ def main():
 
         result = apply_closing(prediction, args.radius)
 
-        new_img = nib.Nifti1Image(
-            result,
-            affine=img.affine,
-            header=img.header.copy()
-        )
+        new_img = nib.Nifti1Image(result,affine=img.affine, header=img.header.copy())
         new_img.set_data_dtype(np.uint8)
 
         nib.save(new_img, args.output / path.name)
